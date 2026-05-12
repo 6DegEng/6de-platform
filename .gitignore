@@ -1,0 +1,28 @@
+# Platform database — rebuilt from schema.sql by ensure_db()
+db/platform.db
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# OS metadata
+Thumbs.db
+desktop.ini
+
+# OneDrive conflict files
+*conflicted copy*
+
+# Environment overrides
+.env
+
+# Temp test files
+_test_*.py
