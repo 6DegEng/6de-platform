@@ -101,7 +101,7 @@ st.markdown(
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.markdown("# 6th Degree Engineering")
-    st.caption("ERP Platform v2.0")
+    st.caption("ERP Platform v3.0")
     st.divider()
     st.markdown(
         "Pages load automatically from the **pages/** folder.  "
@@ -164,17 +164,35 @@ with c4:
         )
 
 # ===================================================================
-# ROW 1b — ERP Metrics
+# ROW 1b — Financial Metrics
 # ===================================================================
 c5, c6, c7, c8 = st.columns(4)
 with c5:
-    st.metric("Pipeline Forecast", format_currency(data.get("pipeline_weighted", 0)))
+    income_ytd = data.get("txn_income_ytd", 0) or data["paid_ytd"]
+    st.metric("Income YTD", format_currency(income_ytd))
 with c6:
+    expenses_ytd = abs(data.get("txn_expenses_ytd", 0))
+    st.metric("Expenses YTD", format_currency(expenses_ytd))
+with c7:
+    net_ytd = data.get("txn_net_ytd", 0)
+    st.metric("Net Cashflow YTD", format_currency(net_ytd))
+with c8:
+    burn = data.get("recurring_monthly_burn", 0)
+    st.metric("Monthly Burn", format_currency(burn))
+
+# ===================================================================
+# ROW 1c — Pipeline & Bids
+# ===================================================================
+c9, c10, c11, c12 = st.columns(4)
+with c9:
+    st.metric("Pipeline Forecast", format_currency(data.get("pipeline_weighted", 0)))
+with c10:
     unbilled = data.get("unbilled_time_amount", 0) + data.get("unbilled_expense_amount", 0)
     st.metric("Unbilled Work", format_currency(unbilled))
-with c7:
-    st.metric("Paid YTD", format_currency(data["paid_ytd"]))
-with c8:
+with c11:
+    outstanding = data.get("project_outstanding", 0)
+    st.metric("Outstanding (Projects)", format_currency(outstanding))
+with c12:
     bid_count = len(data.get("upcoming_bid_deadlines", []))
     st.metric("Bid Deadlines", f"{bid_count} upcoming")
     if bid_count > 0:
@@ -192,6 +210,7 @@ has_alerts = (
     or data["expiring_permits"]
     or data["cca_deadlines"]
     or data["upcoming_milestones"]
+    or data.get("recurring_due_soon")
 )
 
 if has_alerts:
@@ -234,6 +253,14 @@ if has_alerts:
         st.info(
             f"**{ms.get('name', 'Milestone')}** "
             f"({ms.get('project_name', 'Unknown')}) -- due in {label}"
+        )
+
+    # Recurring expenses due soon
+    for rec in data.get("recurring_due_soon", []):
+        st.warning(
+            f"**Recurring: {rec.get('vendor', '?')}** -- "
+            f"{format_currency(rec.get('monthly_amount', 0))} "
+            f"due {format_date(rec.get('next_due_date'))}"
         )
 
 # ===================================================================
@@ -297,6 +324,12 @@ with right_col:
             st.switch_page("pages/4_CRM.py")
         except st.errors.StreamlitAPIException:
             st.toast("CRM page not yet available.", icon="⚠️")
+
+    if st.button("Accounting", use_container_width=True):
+        try:
+            st.switch_page("pages/9_Accounting.py")
+        except st.errors.StreamlitAPIException:
+            st.toast("Accounting page not yet available.", icon="⚠️")
 
     st.divider()
     st.metric("Total Projects", data["total_projects"])

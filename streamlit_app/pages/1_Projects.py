@@ -1,11 +1,12 @@
 """Projects — 6th Degree Engineering Company Platform.
 
 Full project management page: list, create, edit, search, milestones,
-and per-status filtering.
+calculator integration, and per-status filtering.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -19,7 +20,14 @@ _PLATFORM_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
-from db import ensure_db  # noqa: E402
+from config import CALC_EXE_PATH  # noqa: E402
+from db import ensure_db, get_calc_connection  # noqa: E402
+from modules.calculator.bridge import (  # noqa: E402
+    get_calc_outputs,
+    get_linked_calcs,
+    link_calc_to_erp,
+    read_calc_projects,
+)
 from modules.projects.crud import (  # noqa: E402
     create_milestone,
     create_project,
@@ -196,8 +204,8 @@ for tab_idx, tab in enumerate(tabs):
 
             with st.expander(f"{badge}  **{header}**"):
                 # ---- Detail / edit section ----
-                detail_tab, edit_tab, milestone_tab = st.tabs(
-                    ["Details", "Edit", "Milestones"]
+                detail_tab, edit_tab, milestone_tab, calc_tab = st.tabs(
+                    ["Details", "Edit", "Milestones", "Calculations"]
                 )
 
                 # --- Details ---
@@ -417,3 +425,121 @@ for tab_idx, tab in enumerate(tabs):
                                 )
                                 st.success(f"Milestone added.")
                                 st.rerun()
+
+                # --- Calculations ---
+                with calc_tab:
+                    calc_conn = get_calc_connection()
+                    linked_calcs = get_linked_calcs(conn, pid)
+
+                    # -- Open in Calculator button --
+                    btn_col, info_col = st.columns([1, 3])
+                    with btn_col:
+                        if st.button(
+                            "Open in Calculator",
+                            key=f"open_calc_{pid}_{tab_idx}",
+                        ):
+                            try:
+                                if CALC_EXE_PATH.exists():
+                                    subprocess.Popen([str(CALC_EXE_PATH)])
+                                    st.toast("Calculator launched.", icon="🔢")
+                                else:
+                                    st.warning(
+                                        f"Calculator executable not found at "
+                                        f"`{CALC_EXE_PATH}`."
+                                    )
+                            except Exception as exc:
+                                st.error(f"Failed to launch calculator: {exc}")
+                    with info_col:
+                        if linked_calcs:
+                            st.caption(
+                                f"{len(linked_calcs)} linked calc "
+                                f"project{'s' if len(linked_calcs) != 1 else ''}"
+                            )
+
+                    if linked_calcs and calc_conn is not None:
+                        # -- Show outputs for each linked calc project --
+                        for lk in linked_calcs:
+                            calc_pid = lk["calc_project_id"]
+                            st.markdown(
+                                f"**Calc Project #{calc_pid}** "
+                                f"({lk['structure_type'] or 'unknown type'}) "
+                                f"— linked {lk['linked_at'] or '—'}"
+                            )
+
+                            outputs = get_calc_outputs(calc_conn, calc_pid)
+                            if outputs:
+                                for out in outputs:
+                                    if out.get("overall_pass") is True:
+                                        icon = "✅"
+                                        status_text = "PASS"
+                                    elif out.get("overall_pass") is False:
+                                        icon = "❌"
+                                        status_text = "FAIL"
+                                    else:
+                                        icon = "⏳"
+                                        status_text = "Pending"
+
+                                    ts_display = out.get("timestamp") or "—"
+                                    standards = (
+                                        ", ".join(out["standards_cited"])
+                                        if out["standards_cited"]
+                                        else "—"
+                                    )
+
+                                    st.markdown(
+                                        f"{icon} **{out['title']}** — "
+                                        f"{status_text} | "
+                                        f"{out['step_count']} steps | "
+                                        f"Standards: {standards} | "
+                                        f"Last run: {ts_display}"
+                                    )
+                            else:
+                                st.caption("No calculation outputs yet.")
+
+                            st.markdown("---")
+                    elif linked_calcs and calc_conn is None:
+                        st.warning(
+                            "Calculator database (common.db) not found. "
+                            "Run a calculation first to see outputs."
+                        )
+                    else:
+                        st.info("No calculator project linked yet.")
+
+                    # -- Link Calculator Project section --
+                    if calc_conn is not None:
+                        st.markdown("**Link Calculator Project**")
+                        calc_projects = read_calc_projects(calc_conn)
+                        if calc_projects:
+                            with st.form(
+                                f"link_calc_{pid}_{tab_idx}",
+                                clear_on_submit=True,
+                            ):
+                                calc_options = {}
+                                for cp in calc_projects:
+                                    label = (
+                                        f"#{cp['project_id']} — "
+                                        f"{cp.get('project_name', 'Untitled')} "
+                                        f"({cp.get('structure_type', '?')})"
+                                    )
+                                    calc_options[label] = cp["project_id"]
+                                calc_sel = st.selectbox(
+                                    "Calculator Project",
+                                    list(calc_options.keys()),
+                                    key=f"calc_sel_{pid}_{tab_idx}",
+                                )
+                                if st.form_submit_button("Link Project"):
+                                    calc_id = calc_options[calc_sel]
+                                    link_calc_to_erp(
+                                        conn, pid, calc_id, calc_conn
+                                    )
+                                    st.success(
+                                        f"Linked calc #{calc_id} to this project."
+                                    )
+                                    st.rerun()
+                        else:
+                            st.caption(
+                                "No calculator projects found in common.db."
+                            )
+
+                    if calc_conn is not None:
+                        calc_conn.close()

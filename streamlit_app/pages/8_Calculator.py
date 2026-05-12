@@ -94,24 +94,41 @@ with tab_browse:
                 if outputs:
                     st.write(f"**Modules ({len(outputs)}):**")
                     for out in outputs:
-                        icon = "✅" if out.get("overall_pass") else "❌" if out.get("overall_pass") is False else "⏳"
+                        if out.get("overall_pass") is True:
+                            icon = "✅"
+                        elif out.get("overall_pass") is False:
+                            icon = "❌"
+                        else:
+                            icon = "⏳"
+                        ts = out.get("timestamp") or "—"
                         st.write(
                             f"  {icon} **{out['title']}** — "
-                            f"{out['step_count']} steps, "
-                            f"{', '.join(out['standards_cited'][:3]) if out['standards_cited'] else '—'}"
+                            f"{out['step_count']} steps | "
+                            f"Last run: {ts}"
                         )
+                        if out["standards_cited"]:
+                            st.caption(
+                                f"    Standards: {', '.join(out['standards_cited'])}"
+                            )
                 else:
                     st.caption("No outputs yet.")
 
 # ---- Tab 3: Linked details ----
 with tab_detail:
-    st.subheader("Linked Calculator Projects")
+    hdr_col, refresh_col = st.columns([4, 1])
+    with hdr_col:
+        st.subheader("Linked Calculator Projects")
+    with refresh_col:
+        if st.button("Refresh", key="refresh_linked_details"):
+            st.rerun()
+
     if not all_links:
         st.info("No linked projects yet. Use the Link tab to connect calc projects to ERP projects.")
     else:
         for lk in all_links:
             with st.expander(
-                f"{lk['job_number']} — {lk['project_name']} → Calc #{lk['calc_project_id']} "
+                f"{lk['job_number']} — {lk['project_name']} "
+                f"→ Calc #{lk['calc_project_id']} "
                 f"({lk['structure_type'] or '—'})"
             ):
                 col1, col2, col3 = st.columns(3)
@@ -121,10 +138,79 @@ with tab_detail:
 
                 outputs = get_calc_outputs(calc_conn, lk["calc_project_id"])
                 if outputs:
-                    st.write(f"**Calculation Results ({len(outputs)} modules):**")
+                    # Summary counts
+                    pass_count = sum(
+                        1 for o in outputs if o.get("overall_pass") is True
+                    )
+                    fail_count = sum(
+                        1 for o in outputs if o.get("overall_pass") is False
+                    )
+                    pending_count = len(outputs) - pass_count - fail_count
+                    st.write(
+                        f"**Calculation Results ({len(outputs)} modules):** "
+                        f"✅ {pass_count} pass, "
+                        f"❌ {fail_count} fail, "
+                        f"⏳ {pending_count} pending"
+                    )
+                    st.markdown("---")
+
                     for out in outputs:
-                        icon = "✅" if out.get("overall_pass") else "❌" if out.get("overall_pass") is False else "⏳"
-                        st.write(f"  {icon} **{out['title']}** — {out['step_count']} checks")
+                        if out.get("overall_pass") is True:
+                            icon = "✅"
+                            status_text = "PASS"
+                        elif out.get("overall_pass") is False:
+                            icon = "❌"
+                            status_text = "FAIL"
+                        else:
+                            icon = "⏳"
+                            status_text = "Pending"
+
+                        ts_display = out.get("timestamp") or "—"
+
+                        st.markdown(
+                            f"{icon} **{out['title']}** — "
+                            f"{status_text} | "
+                            f"{out['step_count']} steps | "
+                            f"Last run: {ts_display}"
+                        )
+
+                        # Standards cited
+                        if out["standards_cited"]:
+                            formatted_stds = "  \n".join(
+                                f"- {s}" for s in out["standards_cited"]
+                            )
+                            st.caption(f"Standards cited:\n{formatted_stds}")
+
+                        # Expandable step details
+                        steps = out.get("steps", [])
+                        if steps:
+                            with st.expander(
+                                f"Step details ({len(steps)} steps)",
+                                expanded=False,
+                            ):
+                                for i, step in enumerate(steps, 1):
+                                    if isinstance(step, dict):
+                                        step_pass = step.get("pass")
+                                        step_icon = (
+                                            "✅" if step_pass is True
+                                            else "❌" if step_pass is False
+                                            else "—"
+                                        )
+                                        step_label = step.get(
+                                            "label",
+                                            step.get("name", f"Step {i}"),
+                                        )
+                                        step_value = step.get("value", "")
+                                        step_ref = step.get("reference", "")
+                                        line = f"{step_icon} **{step_label}**"
+                                        if step_value:
+                                            line += f" = {step_value}"
+                                        if step_ref:
+                                            line += f"  *({step_ref})*"
+                                        st.markdown(line)
+                                    else:
+                                        st.write(f"  {i}. {step}")
+                        st.markdown("")
                 else:
                     st.caption("No calc outputs found.")
 

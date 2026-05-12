@@ -74,7 +74,7 @@ def get_calc_outputs(
     calc_conn: sqlite3.Connection, calc_project_id: int
 ) -> list[dict]:
     rows = calc_conn.execute(
-        "SELECT module_name, calc_result_json FROM project_outputs "
+        "SELECT module_name, calc_result_json, timestamp FROM project_outputs "
         "WHERE project_id = ?",
         (calc_project_id,),
     ).fetchall()
@@ -89,7 +89,9 @@ def get_calc_outputs(
             "overall_pass": data.get("overall_pass"),
             "title": data.get("title", r["module_name"]),
             "standards_cited": data.get("standards_cited", []),
+            "steps": data.get("steps", []),
             "step_count": len(data.get("steps", [])),
+            "timestamp": r["timestamp"] if "timestamp" in r.keys() else None,
         })
     return results
 

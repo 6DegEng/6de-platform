@@ -206,4 +206,44 @@ def get_dashboard_data(conn: sqlite3.Connection) -> dict:
         ).fetchall()
     ]
 
+    # ------------------------------------------------------------------
+    # Accounting: income/expense YTD from transactions
+    # ------------------------------------------------------------------
+    row = conn.execute(
+        "SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS income,"
+        "       COALESCE(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) AS expenses,"
+        "       COALESCE(SUM(amount), 0) AS net "
+        "FROM transactions WHERE txn_date >= ?",
+        (year_start,),
+    ).fetchone()
+    data["txn_income_ytd"] = row["income"]
+    data["txn_expenses_ytd"] = row["expenses"]
+    data["txn_net_ytd"] = row["net"]
+
+    row = conn.execute(
+        "SELECT COALESCE(SUM(monthly_amount), 0) AS burn "
+        "FROM recurring_expenses WHERE active = 1"
+    ).fetchone()
+    data["recurring_monthly_burn"] = row["burn"]
+
+    # Total outstanding from project contract values
+    row = conn.execute(
+        "SELECT COALESCE(SUM(outstanding_balance), 0) AS outstanding "
+        "FROM projects WHERE status = 'active'"
+    ).fetchone()
+    data["project_outstanding"] = row["outstanding"]
+
+    # Recurring expenses due within 7 days
+    horizon_7 = (date.today() + timedelta(days=7)).isoformat()
+    data["recurring_due_soon"] = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT id, vendor, category, monthly_amount, next_due_date "
+            "FROM recurring_expenses "
+            "WHERE active = 1 AND next_due_date BETWEEN ? AND ? "
+            "ORDER BY next_due_date ASC",
+            (today, horizon_7),
+        ).fetchall()
+    ]
+
     return data
