@@ -33,11 +33,13 @@ from modules.billing.crud import (  # noqa: E402
     update_invoice,
     update_proposal,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Billing | 6DE Platform", page_icon="$", layout="wide")
+require_auth()
 
 
 # ---------------------------------------------------------------------------

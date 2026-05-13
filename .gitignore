@@ -1,28 +1,94 @@
-# Platform database — rebuilt from schema.sql by ensure_db()
+# 6DE Company Platform — gitignore
+# See README.md "Environment Setup" for what each ignored path is and how to
+# regenerate it on a fresh checkout.
+
+# ---------- Secrets ----------
+# Real credentials. Never commit. auth_config.example.yaml IS committed.
+auth_config.yaml
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ---------- Databases ----------
+# Local SQLite lives in %LOCALAPPDATA% — these patterns only catch stragglers
+# and the legacy db/platform.db location.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 db/platform.db
 
-# Python bytecode
+# ---------- Python ----------
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
 
-# Streamlit secrets
-.streamlit/secrets.toml
+# ---------- Venv ----------
+.venv/
+venv/
+env/
+ENV/
 
-# IDE / editor
+# ---------- IDE / Editor ----------
 .vscode/
 .idea/
 *.swp
-
-# OS metadata
+*.swo
+.DS_Store
 Thumbs.db
-desktop.ini
 
-# OneDrive conflict files
+# ---------- Streamlit ----------
+.streamlit/secrets.toml
+
+# ---------- Logs / outputs ----------
+*.log
+logs/
+outputs/
+exports/
+_archive/
+tmp/
+temp/
+
+# ---------- Local-only research / scratch ----------
+# Research artifacts and bug backlogs stay on Juan's OneDrive — they're
+# session-specific working notes, not deployable artifacts.
+_research/
+_scaffolding/
+_session*/
+SESSION*_NOTES.md
+SESSION*_BUG_BACKLOG.md
+CLAUDE_CODE_PROMPT_*.md
+
+# ---------- One-shot helper scripts ----------
+# Prefix any temporary smoke/discovery script with _phase or _scratch
+_phase*.py
+_phase*.json
+_phase*.log
+_scratch_*
+_test_*.py
+
+# ---------- OneDrive metadata ----------
+desktop.ini
+.OneDriveTemp/
 *conflicted copy*
 
-# Environment overrides
-.env
+# ---------- Runtime-generated ----------
+db/.sync_state.json
+scripts/sync_accounting.log
 
-# Temp test files
-_test_*.py
+# ---------- Docker build artifacts ----------
+.dockerignore.local

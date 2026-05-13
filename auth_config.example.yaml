@@ -1,0 +1,27 @@
+# Template for auth_config.yaml — copy this file, rename it, then replace
+# the EXAMPLE_HASH values with real bcrypt hashes. Never commit the real one.
+#
+# To generate a bcrypt hash:
+#   python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt(rounds=12)).decode())"
+#
+# Quote the resulting hash with double quotes because it contains `$`.
+
+credentials:
+  usernames:
+    admin:
+      email: admin@example.com
+      name: Admin User
+      password: "EXAMPLE_HASH_REPLACE_ME"
+      role: admin
+    viewer:
+      email: viewer@example.com
+      name: Read-Only Viewer
+      password: "EXAMPLE_HASH_REPLACE_ME"
+      role: viewer
+
+cookie:
+  expiry_days: 30
+  # Generate a new random key for each deployment:
+  #   python -c "import secrets; print(secrets.token_hex(32))"
+  key: "REPLACE_WITH_RANDOM_HEX_FROM_secrets.token_hex_32"
+  name: "6de_platform_auth"

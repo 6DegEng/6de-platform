@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint with ruff
+        run: |
+          ruff check . --select=E,F,W --ignore=E501,E402
+
+      - name: Smoke import every page module
+        # Confirms each Streamlit page can be parsed and its top-level imports resolve.
+        # Does NOT attempt to run Streamlit — that's local-dev / deploy verification.
+        env:
+          PLATFORM_DB_PATH: /tmp/ci_platform.db
+          AUTH_CONFIG_PATH: ${{ github.workspace }}/auth_config.example.yaml
+          # CALC_DB_PATH intentionally unset — exercises the lazy-bridge path
+        run: |
+          # Copy example to real path so AUTH_CONFIG_PATH points at something
+          cp auth_config.example.yaml /tmp/ci_auth.yaml
+          export AUTH_CONFIG_PATH=/tmp/ci_auth.yaml
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          errors = 0
+          pages = sorted(Path("streamlit_app/pages").glob("*.py"))
+          pages = [p for p in pages if p.name != "__init__.py"]
+          home = Path("streamlit_app/Home.py")
+          all_files = [home] + pages
+          for f in all_files:
+              try:
+                  ast.parse(f.read_text(encoding="utf-8"))
+                  print(f"OK  {f}")
+              except SyntaxError as e:
+                  print(f"ERR {f}: {e}")
+                  errors += 1
+          if errors:
+              raise SystemExit(f"{errors} page files failed to parse")
+          PY
+
+      - name: Run pytest smoke suite
+        env:
+          PLATFORM_DB_PATH: /tmp/ci_pytest.db
+          AUTH_CONFIG_PATH: /tmp/ci_auth.yaml
+        run: |
+          pytest tests/ -q --tb=short

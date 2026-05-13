@@ -1,0 +1,75 @@
+# Keep the build context tight: research, archives, local SQLite, and IDE
+# metadata don't belong in the image.
+
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Local-only research and scratch
+_research/
+_scaffolding/
+_session*/
+SESSION*_NOTES.md
+SESSION*_BUG_BACKLOG.md
+CLAUDE_CODE_PROMPT_*.md
+_archive/
+_phase*.py
+_phase*.json
+_phase*.log
+_scratch_*
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+htmlcov/
+.coverage
+.tox/
+
+# Local databases (production gets its own mounted volume)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+db/platform.db
+
+# Secrets — production mounts auth_config.yaml at runtime
+auth_config.yaml
+.env
+.env.*
+*.pem
+*.key
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Logs
+*.log
+logs/
+outputs/
+exports/
+
+# Docker artifacts
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# OneDrive crud
+desktop.ini
+.OneDriveTemp/

@@ -593,6 +593,20 @@ FROM transactions
 GROUP BY strftime('%Y-%m', txn_date);
 
 -- ============================================================
+-- CATEGORIZATION RULES (transaction auto-categorization engine)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS categorization_rules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern     TEXT    NOT NULL UNIQUE,
+    category    TEXT    NOT NULL,
+    priority    INTEGER NOT NULL DEFAULT 100,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_catrules_priority ON categorization_rules(priority);
+
+-- ============================================================
 -- SEED DATA: 2026 Fee Schedule
 -- ============================================================
 INSERT OR IGNORE INTO fee_schedule (role, hourly_rate, effective_date, description)

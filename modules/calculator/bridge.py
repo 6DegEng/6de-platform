@@ -1,10 +1,44 @@
-"""Read-only bridge between the ERP and the calc engine's common.db."""
+"""Read-only bridge between the ERP and the calc engine's common.db.
+
+**Lazy by design.** This module is safe to import in any context — it touches
+zero files at import time. The actual calc DB connection is opened by
+``db.get_calc_connection()``, which returns ``None`` when ``CALC_DB_PATH``
+is unset or the file is missing (e.g., in CI, in the Phase 8 cloud deploy
+before the nightly snapshot job runs). Pages that consume the bridge MUST
+check for ``None`` before calling any of the read functions below.
+
+Pattern for consumer pages:
+
+    from modules.calculator.bridge import bridge_available, read_calc_projects
+    from db import get_calc_connection
+
+    calc_conn = get_calc_connection()
+    if not bridge_available(calc_conn):
+        st.warning("Calc engine bridge is not available in this deployment.")
+        st.stop()
+    projects = read_calc_projects(calc_conn)
+"""
 from __future__ import annotations
 
 import json
 import sqlite3
 from datetime import datetime
 from typing import Any
+
+
+def bridge_available(calc_conn: sqlite3.Connection | None) -> bool:
+    """Return True if the calc bridge can serve reads in the current context.
+
+    Cheap and side-effect-free. Use this to gate any UI that depends on
+    calc-engine data; degrade gracefully when False.
+    """
+    if calc_conn is None:
+        return False
+    try:
+        calc_conn.execute("SELECT 1 FROM projects LIMIT 1").fetchone()
+        return True
+    except sqlite3.Error:
+        return False
 
 
 def _now() -> str:
@@ -27,7 +61,8 @@ def _log_activity(
 
 def read_calc_projects(calc_conn: sqlite3.Connection) -> list[dict]:
     rows = calc_conn.execute(
-        "SELECT project_id, project_name, address, structure_type, discipline, status "
+        "SELECT project_id, project_name, project_address AS address, "
+        "client_name, structure_type, discipline, code_basis, status "
         "FROM projects ORDER BY project_id DESC"
     ).fetchall()
     return [dict(r) for r in rows]

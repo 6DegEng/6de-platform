@@ -44,11 +44,13 @@ from streamlit_app.components.formatters import (  # noqa: E402
     format_percentage,
     status_badge,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page configuration
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="CRM | 6DE Platform", page_icon="📊", layout="wide")
+require_auth()
 st.title("CRM & Pipeline")
 st.caption("6th Degree Engineering -- Opportunity Pipeline and Client Management")
 

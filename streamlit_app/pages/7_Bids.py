@@ -46,6 +46,7 @@ from streamlit_app.components.formatters import (  # noqa: E402
     format_date,
     status_badge,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -55,6 +56,7 @@ st.set_page_config(
     page_icon="📋",
     layout="wide",
 )
+require_auth()
 
 # ---------------------------------------------------------------------------
 # Constants

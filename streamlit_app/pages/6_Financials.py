@@ -34,6 +34,7 @@ from streamlit_app.components.formatters import (  # noqa: E402
     format_currency,
     format_percentage,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -43,6 +44,7 @@ st.set_page_config(
     page_icon="$",
     layout="wide",
 )
+require_auth()
 
 # ---------------------------------------------------------------------------
 # DB connection
@@ -62,22 +64,37 @@ summary = get_financial_summary(conn)
 forecast = get_revenue_forecast(conn)
 
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Revenue YTD", format_currency(summary["revenue_ytd"]))
-m2.metric("Outstanding AR", format_currency(summary["outstanding"]))
+# A5 fix: renamed "Revenue YTD" -> "Invoiced Revenue YTD" so it can't be
+# confused with Home's "Cash Inflows YTD". See docs/data_definitions.md.
+m1.metric(
+    "Invoiced Revenue YTD",
+    format_currency(summary["revenue_ytd"]),
+    help="Sum of paid invoices, invoice basis (not cash). "
+         "See docs/data_definitions.md §4.",
+)
+m2.metric(
+    "Outstanding AR",
+    format_currency(summary["outstanding"]),
+    help="Sent + overdue invoice balance. See docs/data_definitions.md §5.",
+)
 m3.metric(
     "Overdue",
     format_currency(summary["overdue"]),
     delta_color="inverse",
+    help="Past-due-date unpaid invoice balance. "
+         "See docs/data_definitions.md §7.",
 )
 m4.metric(
     "Unbilled T&E",
     format_currency(summary["unbilled_time"] + summary["unbilled_expenses"]),
-    help="Unbilled billable time + reimbursable expenses",
+    help="Unbilled billable time + reimbursable expenses (with markup). "
+         "See docs/data_definitions.md §8.",
 )
 m5.metric(
     "Pipeline Forecast",
     format_currency(forecast["total_forecast"]),
-    help="Outstanding invoices + pending schedules + weighted pipeline",
+    help="Outstanding invoices + pending schedules + weighted pipeline. "
+         "See docs/data_definitions.md §9.",
 )
 
 st.divider()
@@ -234,25 +251,25 @@ with tab_profit:
         st.subheader("Profitability by Client")
         client_data = get_profitability_by_client(conn)
         if client_data:
-            df_client = pd.DataFrame(client_data)
+            df_client = pd.DataFrame(client_data).rename(columns={
+                "client_name": "Client",
+                "project_count": "Projects",
+                "total_labor_cost": "Labor Cost",
+                "total_expenses": "Expenses",
+                "total_invoiced": "Invoiced",
+                "total_paid": "Paid",
+                "net_margin": "Net Margin",
+            })
             st.dataframe(
                 df_client.style.format({
-                    "total_labor_cost": "${:,.2f}",
-                    "total_expenses": "${:,.2f}",
-                    "total_invoiced": "${:,.2f}",
-                    "total_paid": "${:,.2f}",
-                    "net_margin": "${:,.2f}",
-                }).rename(columns={
-                    "client_name": "Client",
-                    "project_count": "Projects",
-                    "total_labor_cost": "Labor Cost",
-                    "total_expenses": "Expenses",
-                    "total_invoiced": "Invoiced",
-                    "total_paid": "Paid",
-                    "net_margin": "Net Margin",
+                    "Labor Cost": "${:,.2f}",
+                    "Expenses": "${:,.2f}",
+                    "Invoiced": "${:,.2f}",
+                    "Paid": "${:,.2f}",
+                    "Net Margin": "${:,.2f}",
                 }).map(
                     _highlight_margin,
-                    subset=["net_margin"],
+                    subset=["Net Margin"],
                 ),
                 use_container_width=True,
                 hide_index=True,

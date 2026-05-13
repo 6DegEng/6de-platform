@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import sqlite3
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -17,12 +19,19 @@ if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
 from db import ensure_db  # noqa: E402
+from modules.accounting.categorization import (  # noqa: E402
+    categorize_all_uncategorized,
+    categorize_transaction,
+    get_all_rules,
+    get_distinct_categories,
+)
 from streamlit_app.components.formatters import (  # noqa: E402
     days_until,
     format_currency,
     format_date,
     urgency_color,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -32,6 +41,7 @@ st.set_page_config(
     page_icon="\U0001f4b0",
     layout="wide",
 )
+require_auth()
 
 # ---------------------------------------------------------------------------
 # DB connection
@@ -99,8 +109,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_txn, tab_cashflow, tab_recurring = st.tabs(
-    ["Transactions", "Cashflow", "Recurring Expenses"]
+tab_txn, tab_cashflow, tab_recurring, tab_categorization = st.tabs(
+    ["Transactions", "Cashflow", "Recurring Expenses", "Categorization"]
 )
 
 # ========================== TAB 1: TRANSACTIONS ============================
@@ -520,6 +530,257 @@ with tab_recurring:
                 )
                 conn.commit()
                 st.success(f"Deleted: {sel_rec['vendor']}")
+                st.rerun()
+
+# ====================== TAB 4: CATEGORIZATION ==============================
+with tab_categorization:
+    st.subheader("Transaction Categorization")
+
+    # -- Summary metrics --
+    total_txn_count = conn.execute("SELECT COUNT(*) AS c FROM transactions").fetchone()["c"]
+    categorized_count = conn.execute(
+        "SELECT COUNT(*) AS c FROM transactions "
+        "WHERE expense_category IS NOT NULL "
+        "  AND expense_category != '' "
+        "  AND expense_category != 'Uncategorized'"
+    ).fetchone()["c"]
+    uncategorized_count = total_txn_count - categorized_count
+    rule_count = conn.execute("SELECT COUNT(*) AS c FROM categorization_rules WHERE is_active = 1").fetchone()["c"]
+
+    cm1, cm2, cm3, cm4 = st.columns(4)
+    cm1.metric("Total Transactions", f"{total_txn_count:,}")
+    cm2.metric("Categorized", f"{categorized_count:,}")
+    cm3.metric("Uncategorized", f"{uncategorized_count:,}")
+    cm4.metric("Active Rules", f"{rule_count:,}")
+
+    # -- Run Categorization button --
+    st.markdown("")
+    if st.button("Run Auto-Categorization", type="primary", key="run_categorization"):
+        updated = categorize_all_uncategorized(conn)
+        if updated > 0:
+            st.success(f"Categorized {updated} transaction(s).")
+            st.rerun()
+        else:
+            st.info("No uncategorized transactions could be matched to a rule.")
+
+    st.divider()
+
+    # -- Needs Review queue --
+    st.subheader("Needs Review")
+    st.caption("Transactions without a category assignment. Manually assign below.")
+
+    uncat_rows = conn.execute(
+        "SELECT id, txn_date, account, description, amount "
+        "FROM transactions "
+        "WHERE expense_category IS NULL "
+        "   OR expense_category = '' "
+        "   OR expense_category = 'Uncategorized' "
+        "ORDER BY txn_date DESC"
+    ).fetchall()
+
+    if uncat_rows:
+        # Build category options from rules + existing categories
+        rule_categories = get_distinct_categories(conn)
+        existing_cats_rows = conn.execute(
+            "SELECT DISTINCT expense_category FROM transactions "
+            "WHERE expense_category IS NOT NULL AND expense_category != '' "
+            "ORDER BY expense_category"
+        ).fetchall()
+        existing_cats = [r["expense_category"] for r in existing_cats_rows]
+        all_categories = sorted(set(rule_categories + existing_cats))
+
+        # Show table
+        uncat_data = []
+        for r in uncat_rows:
+            uncat_data.append({
+                "ID": r["id"],
+                "Date": format_date(r["txn_date"]),
+                "Account": r["account"] or "",
+                "Description": r["description"] or "",
+                "Amount": r["amount"],
+            })
+        df_uncat = pd.DataFrame(uncat_data)
+        st.dataframe(
+            df_uncat.style.format({"Amount": "${:,.2f}"}),
+            use_container_width=True,
+            hide_index=True,
+            height=min(len(uncat_data) * 38 + 40, 400),
+        )
+
+        # Manual assignment form
+        with st.form("manual_categorize_form", clear_on_submit=True):
+            mc1, mc2 = st.columns(2)
+            uncat_options = {
+                r["id"]: f'{format_date(r["txn_date"])} | {(r["description"] or "")[:60]} | ${r["amount"]:,.2f}'
+                for r in uncat_rows
+            }
+            sel_txn_id = mc1.selectbox(
+                "Transaction",
+                options=list(uncat_options.keys()),
+                format_func=lambda x: uncat_options[x],
+                key="manual_cat_txn",
+            )
+            sel_cat = mc2.selectbox("Category", all_categories, key="manual_cat_cat")
+
+            if st.form_submit_button("Assign Category", type="primary", use_container_width=True):
+                conn.execute(
+                    "UPDATE transactions SET expense_category = ? WHERE id = ?",
+                    (sel_cat, sel_txn_id),
+                )
+                conn.commit()
+                st.success(f"Assigned '{sel_cat}' to transaction #{sel_txn_id}.")
+                st.rerun()
+    else:
+        st.info("All transactions are categorized.")
+
+    st.divider()
+
+    # -- Test a Pattern --
+    st.subheader("Test a Pattern")
+    st.caption("Enter a transaction description to see which rule would match.")
+
+    test_desc = st.text_input("Description to test", key="test_pattern_input")
+    if test_desc:
+        match_result = categorize_transaction(conn, test_desc)
+        if match_result:
+            st.success(f"Matched category: **{match_result}**")
+        else:
+            st.warning("No rule matched this description.")
+
+    st.divider()
+
+    # -- Rules Management --
+    st.subheader("Rules Management")
+    st.caption("Add, edit, or delete categorization rules. Lower priority numbers match first.")
+
+    rules = get_all_rules(conn)
+    if rules:
+        rules_data = []
+        for r in rules:
+            rules_data.append({
+                "ID": r["id"],
+                "Pattern": r["pattern"],
+                "Category": r["category"],
+                "Priority": r["priority"],
+                "Active": "Yes" if r["is_active"] else "No",
+                "Created": format_date(r["created_at"]),
+            })
+
+        df_rules = pd.DataFrame(rules_data)
+        st.dataframe(
+            df_rules,
+            use_container_width=True,
+            hide_index=True,
+            height=min(len(rules_data) * 38 + 40, 500),
+        )
+    else:
+        st.info("No categorization rules found.")
+
+    # -- Add New Rule --
+    st.markdown("---")
+    st.subheader("Add New Rule")
+
+    with st.form("add_rule_form", clear_on_submit=True):
+        ar1, ar2, ar3 = st.columns(3)
+        new_pattern = ar1.text_input("Pattern (regex) *", key="new_rule_pattern")
+        new_rule_cat = ar2.text_input("Category *", key="new_rule_cat")
+        new_priority = ar3.number_input(
+            "Priority", min_value=1, max_value=999, value=100, step=1, key="new_rule_priority"
+        )
+
+        if st.form_submit_button("Add Rule", type="primary", use_container_width=True):
+            if not new_pattern.strip():
+                st.error("Pattern is required.")
+            elif not new_rule_cat.strip():
+                st.error("Category is required.")
+            else:
+                # Validate regex
+                try:
+                    re.compile(new_pattern.strip())
+                except re.error as exc:
+                    st.error(f"Invalid regex pattern: {exc}")
+                else:
+                    try:
+                        conn.execute(
+                            "INSERT INTO categorization_rules (pattern, category, priority) "
+                            "VALUES (?, ?, ?)",
+                            (new_pattern.strip(), new_rule_cat.strip(), new_priority),
+                        )
+                        conn.commit()
+                        st.success(f"Added rule: '{new_pattern.strip()}' -> {new_rule_cat.strip()}")
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("A rule with this exact pattern already exists.")
+
+    # -- Edit / Delete Rule --
+    if rules:
+        st.markdown("---")
+        st.subheader("Edit / Delete Rule")
+
+        rule_options = {
+            r["id"]: f'[{r["priority"]}] {r["pattern"][:50]} -> {r["category"]}'
+            for r in rules
+        }
+        sel_rule_id = st.selectbox(
+            "Select rule to edit",
+            options=list(rule_options.keys()),
+            format_func=lambda x: rule_options[x],
+            key="edit_rule_select",
+        )
+
+        sel_rule = next(r for r in rules if r["id"] == sel_rule_id)
+
+        with st.form("edit_rule_form", clear_on_submit=False):
+            er1, er2, er3 = st.columns(3)
+            edit_pattern = er1.text_input("Pattern (regex)", value=sel_rule["pattern"], key="edit_rule_pattern")
+            edit_rule_cat = er2.text_input("Category", value=sel_rule["category"], key="edit_rule_cat")
+            edit_priority = er3.number_input(
+                "Priority",
+                min_value=1, max_value=999,
+                value=int(sel_rule["priority"]),
+                step=1,
+                key="edit_rule_priority",
+            )
+            edit_active = st.checkbox("Active", value=bool(sel_rule["is_active"]), key="edit_rule_active")
+
+            eb1, eb2 = st.columns(2)
+            save_rule = eb1.form_submit_button("Save Changes", type="primary", use_container_width=True)
+            delete_rule = eb2.form_submit_button("Delete Rule", use_container_width=True)
+
+            if save_rule:
+                if not edit_pattern.strip():
+                    st.error("Pattern is required.")
+                elif not edit_rule_cat.strip():
+                    st.error("Category is required.")
+                else:
+                    try:
+                        re.compile(edit_pattern.strip())
+                    except re.error as exc:
+                        st.error(f"Invalid regex pattern: {exc}")
+                    else:
+                        try:
+                            conn.execute(
+                                "UPDATE categorization_rules SET "
+                                "pattern = ?, category = ?, priority = ?, is_active = ? "
+                                "WHERE id = ?",
+                                (
+                                    edit_pattern.strip(),
+                                    edit_rule_cat.strip(),
+                                    edit_priority,
+                                    1 if edit_active else 0,
+                                    sel_rule_id,
+                                ),
+                            )
+                            conn.commit()
+                            st.success(f"Updated rule #{sel_rule_id}.")
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.error("A rule with this exact pattern already exists.")
+
+            if delete_rule:
+                conn.execute("DELETE FROM categorization_rules WHERE id = ?", (sel_rule_id,))
+                conn.commit()
+                st.success(f"Deleted rule #{sel_rule_id}.")
                 st.rerun()
 
 # ---------------------------------------------------------------------------

@@ -18,8 +18,10 @@ from modules.calculator.bridge import (
     read_calc_projects,
 )
 from modules.projects.crud import list_projects
+from streamlit_app.auth import require_auth
 
 st.set_page_config(page_title="Calculator | 6DE", page_icon="🔢", layout="wide")
+require_auth()
 st.title("Calculator Integration")
 
 conn = ensure_db()

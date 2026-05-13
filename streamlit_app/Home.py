@@ -26,9 +26,12 @@ import streamlit as st
 
 from db import ensure_db
 from modules.dashboard.queries import get_dashboard_data
+from modules.invoicing.crud import get_ar_aging_report, get_ar_aging_summary
+from streamlit_app.auth import require_auth, show_logout_button
 from streamlit_app.components.formatters import (
     days_until,
     format_currency,
+    format_currency_compact,
     format_date,
     status_badge,
     urgency_color,
@@ -65,9 +68,17 @@ st.markdown(
         font-size: 0.9rem;
         color: #495057;
     }
-    [data-testid="stMetricValue"] {
+    /* A2 fix: explicit dark color so values render on the light card
+       background even when the user's system / Streamlit theme defaults
+       to a light foreground colour. */
+    [data-testid="stMetricValue"],
+    [data-testid="stMetricValue"] > div {
         font-size: 1.6rem;
         font-weight: 700;
+        color: #212529 !important;
+    }
+    [data-testid="stMetricDelta"] {
+        color: #495057 !important;
     }
 
     /* Sidebar branding */
@@ -97,11 +108,17 @@ st.markdown(
 )
 
 # ---------------------------------------------------------------------------
+# Auth gate
+# ---------------------------------------------------------------------------
+require_auth()
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
+    show_logout_button()
     st.markdown("# 6th Degree Engineering")
-    st.caption("ERP Platform v3.0")
+    st.caption("ERP Platform v3.1")
     st.divider()
     st.markdown(
         "Pages load automatically from the **pages/** folder.  "
@@ -119,7 +136,6 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 conn = ensure_db()
 data = get_dashboard_data(conn)
-conn.close()
 
 # ---------------------------------------------------------------------------
 # Header
@@ -133,29 +149,31 @@ st.caption(format_date(str(__import__("datetime").date.today())))
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    delta = (
-        f"+{data['new_projects_this_month']} this month"
-        if data["new_projects_this_month"]
-        else None
-    )
-    st.metric("Active Projects", data["active_projects"], delta=delta)
+    # A2 fix: coerce to str so the value always renders even if the query
+    # ever returns None; clamp the delta to non-zero to avoid noisy badges.
+    active_n = int(data.get("active_projects") or 0)
+    new_n = int(data.get("new_projects_this_month") or 0)
+    delta = f"+{new_n} this month" if new_n else None
+    st.metric("Active Projects", str(active_n), delta=delta)
 
 with c2:
-    st.metric("Outstanding Revenue", format_currency(data["outstanding_amount"]))
+    st.metric("Outstanding Revenue", format_currency_compact(data["outstanding_amount"]))
 
 with c3:
-    overdue_val = format_currency(data["overdue_amount"])
+    overdue_val = format_currency_compact(data["overdue_amount"])
     st.metric("Overdue Invoices", overdue_val)
     if data["overdue_amount"] > 0:
         st.markdown(
             f"<span style='color:#dc3545;font-weight:600;'>"
-            f"{overdue_val} past due</span>",
+            f"{format_currency(data['overdue_amount'])} past due</span>",
             unsafe_allow_html=True,
         )
 
 with c4:
-    permit_count = len(data["expiring_permits"])
-    st.metric("Expiring Permits", permit_count)
+    # A2 fix: expiring_permits is always a list (default []), so len() is 0
+    # when empty — but we coerce to str to guarantee the value slot renders.
+    permit_count = len(data.get("expiring_permits") or [])
+    st.metric("Expiring Permits", str(permit_count))
     if permit_count > 0:
         st.markdown(
             f"<span style='color:#fd7e14;font-weight:600;'>"
@@ -168,30 +186,37 @@ with c4:
 # ===================================================================
 c5, c6, c7, c8 = st.columns(4)
 with c5:
+    # A5 disambiguation: this is cash-inflow-YTD from the bank transactions
+    # import, NOT invoiced revenue. See docs/data_definitions.md.
     income_ytd = data.get("txn_income_ytd", 0) or data["paid_ytd"]
-    st.metric("Income YTD", format_currency(income_ytd))
+    st.metric("Cash Inflows YTD", format_currency_compact(income_ytd),
+              help="Sum of positive bank transactions year-to-date (cash basis). "
+                   "See docs/data_definitions.md.")
 with c6:
     expenses_ytd = abs(data.get("txn_expenses_ytd", 0))
-    st.metric("Expenses YTD", format_currency(expenses_ytd))
+    st.metric("Cash Outflows YTD", format_currency_compact(expenses_ytd),
+              help="Sum of negative bank transactions year-to-date (cash basis).")
 with c7:
     net_ytd = data.get("txn_net_ytd", 0)
-    st.metric("Net Cashflow YTD", format_currency(net_ytd))
+    st.metric("Net Cashflow YTD", format_currency_compact(net_ytd))
 with c8:
     burn = data.get("recurring_monthly_burn", 0)
-    st.metric("Monthly Burn", format_currency(burn))
+    st.metric("Monthly Burn", format_currency_compact(burn))
 
 # ===================================================================
 # ROW 1c — Pipeline & Bids
 # ===================================================================
 c9, c10, c11, c12 = st.columns(4)
 with c9:
-    st.metric("Pipeline Forecast", format_currency(data.get("pipeline_weighted", 0)))
+    # A3 fix: was "$157,..." truncating; use compact form ($158K)
+    st.metric("Pipeline Forecast",
+              format_currency_compact(data.get("pipeline_weighted", 0)))
 with c10:
     unbilled = data.get("unbilled_time_amount", 0) + data.get("unbilled_expense_amount", 0)
-    st.metric("Unbilled Work", format_currency(unbilled))
+    st.metric("Unbilled Work", format_currency_compact(unbilled))
 with c11:
     outstanding = data.get("project_outstanding", 0)
-    st.metric("Outstanding (Projects)", format_currency(outstanding))
+    st.metric("Outstanding (Projects)", format_currency_compact(outstanding))
 with c12:
     bid_count = len(data.get("upcoming_bid_deadlines", []))
     st.metric("Bid Deadlines", f"{bid_count} upcoming")
@@ -201,6 +226,68 @@ with c12:
             f"{bid_count} within 14 days</span>",
             unsafe_allow_html=True,
         )
+
+# ===================================================================
+# ROW 1d — AR Aging
+# ===================================================================
+st.markdown("---")
+st.markdown("### AR Aging")
+
+aging_summary = get_ar_aging_summary(conn)
+aging_total = sum(aging_summary.values())
+
+_bucket_colors = {
+    "current": "#198754",
+    "1-30": "#fd7e14",
+    "31-60": "#e67e22",
+    "61-90": "#dc3545",
+    "90+": "#8b0000",
+}
+_bucket_labels = {
+    "current": "Current",
+    "1-30": "1-30 Days",
+    "31-60": "31-60 Days",
+    "61-90": "61-90 Days",
+    "90+": "90+ Days",
+}
+
+ar1, ar2, ar3, ar4, ar5, ar6 = st.columns(6)
+_ar_cols = [ar1, ar2, ar3, ar4, ar5]
+for _col, (_bucket, _amount) in zip(_ar_cols, aging_summary.items()):
+    _color = _bucket_colors[_bucket]
+    _label = _bucket_labels[_bucket]
+    _col.markdown(
+        f"<div style='border-left:4px solid {_color};padding:8px 12px;'>"
+        f"<span style='font-size:0.85rem;color:#6c757d;'>{_label}</span><br>"
+        f"<span style='font-size:1.3rem;font-weight:700;'>"
+        f"{format_currency(_amount)}</span></div>",
+        unsafe_allow_html=True,
+    )
+ar6.markdown(
+    f"<div style='border-left:4px solid #0d6efd;padding:8px 12px;'>"
+    f"<span style='font-size:0.85rem;color:#6c757d;'>Total</span><br>"
+    f"<span style='font-size:1.3rem;font-weight:700;'>"
+    f"{format_currency(aging_total)}</span></div>",
+    unsafe_allow_html=True,
+)
+
+# Top delinquent clients callout (90+ days past due)
+if aging_summary.get("90+", 0) > 0:
+    aging_rows = get_ar_aging_report(conn)
+    delinquent = [r for r in aging_rows if r["aging_bucket"] == "90+"]
+    # Aggregate by client
+    client_totals: dict[str, float] = {}
+    for r in delinquent:
+        client = r["client_name"] or r["project_name"] or "Unknown"
+        client_totals[client] = client_totals.get(client, 0) + (r["balance_due"] or 0)
+    top_clients = sorted(client_totals.items(), key=lambda x: x[1], reverse=True)[:3]
+    client_lines = "  \n".join(
+        f"- **{name}**: {format_currency(bal)}" for name, bal in top_clients
+    )
+    st.warning(
+        f"**{format_currency(aging_summary['90+'])} is 90+ days past due.** "
+        f"Top delinquent clients:  \n{client_lines}"
+    )
 
 # ===================================================================
 # ROW 2 — Alerts (conditional)
@@ -370,6 +457,11 @@ with chart_right:
         st.bar_chart(df, horizontal=True)
     else:
         st.info("No permit data yet.")
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+conn.close()
 
 # ---------------------------------------------------------------------------
 # Footer

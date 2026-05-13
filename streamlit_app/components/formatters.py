@@ -20,6 +20,33 @@ def format_currency(amount: float | int | None) -> str:
     return f"${amount:,.2f}"
 
 
+def format_currency_compact(amount: float | int | None) -> str:
+    """Compact currency for KPI cards where horizontal space is tight.
+
+    Examples:
+      None    -> "$0"
+      850     -> "$850"
+      15_000  -> "$15.0K"
+      157_800 -> "$157.8K"
+      1_250_000 -> "$1.25M"
+      1_500_000_000 -> "$1.50B"
+
+    Used on cards that previously truncated to "$157,..." (A3 fix).
+    """
+    if amount is None:
+        return "$0"
+    a = float(amount)
+    sign = "-" if a < 0 else ""
+    a = abs(a)
+    if a < 1_000:
+        return f"{sign}${a:.0f}"
+    if a < 1_000_000:
+        return f"{sign}${a / 1_000:.1f}K"
+    if a < 1_000_000_000:
+        return f"{sign}${a / 1_000_000:.2f}M"
+    return f"{sign}${a / 1_000_000_000:.2f}B"
+
+
 # ---------------------------------------------------------------------------
 # Dates
 # ---------------------------------------------------------------------------

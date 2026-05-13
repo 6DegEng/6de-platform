@@ -42,11 +42,13 @@ from modules.timekeeping.crud import (  # noqa: E402
     update_expense,
     update_time_entry,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Timekeeping | 6DE Platform", page_icon="⏱️", layout="wide")
+require_auth()
 
 # ---------------------------------------------------------------------------
 # Helpers

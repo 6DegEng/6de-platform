@@ -35,11 +35,13 @@ from modules.permits.crud import (
     update_contact,
     update_permit,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Permits | 6DE Platform", page_icon="🏗️", layout="wide")
+require_auth()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -772,6 +774,9 @@ with tab_deadlines:
 
 # ===== TAB 3: CONTACTS ===================================================
 with tab_contacts:
+    # A4 fix: count badge so importer results are visible from the UI.
+    total_contacts = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+
     st.subheader("Permit Contacts")
     st.caption("County officials, inspectors, attorneys, and other contacts for permit work.")
 
@@ -787,6 +792,17 @@ with tab_contacts:
             )
 
     contacts = list_contacts(conn, role_type=selected_role)
+
+    # A4 fix: render "N contacts · N shown" badge between filter and list.
+    _shown = len(contacts)
+    st.markdown(
+        f"<div style='margin:8px 0 16px 0;color:#495057;font-size:0.9rem;'>"
+        f"<strong>{total_contacts}</strong> contact{'s' if total_contacts != 1 else ''} "
+        f"&middot; <strong>{_shown}</strong> shown"
+        f"{' (filtered)' if selected_role else ''}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     if not contacts:
         st.info("No contacts found.")

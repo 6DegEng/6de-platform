@@ -22,7 +22,7 @@ PLATFORM_ROOT = Path(__file__).resolve().parents[2]
 if str(PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(PLATFORM_ROOT))
 
-from db import ensure_db  # noqa: E402
+from db import ensure_db, log_activity  # noqa: E402
 
 import openpyxl  # noqa: E402
 
@@ -476,6 +476,22 @@ def main():
         print(f"CRM (accounting):  {crm_stats['inserted']} inserted, "
               f"{crm_stats['updated']} updated, {crm_stats['skipped']} skipped")
 
+        # B4/I1: emit a single summary activity_log event per importer run
+        log_activity(
+            conn,
+            entity_type="importer",
+            entity_id=0,
+            action="imported",
+            details={
+                "importer": "import_accounting",
+                "source": str(SOURCE.name),
+                "transactions_inserted": actual_inserted,
+                "project_revenue": rev_stats,
+                "recurring_expenses": recur_stats,
+                "crm": crm_stats,
+            },
+        )
+        conn.commit()
     finally:
         wb.close()
         conn.close()

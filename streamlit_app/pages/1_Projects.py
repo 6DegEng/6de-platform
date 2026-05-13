@@ -40,11 +40,13 @@ from modules.projects.crud import (  # noqa: E402
     update_milestone,
     update_project,
 )
+from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page configuration
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Projects | 6DE", page_icon="🏗️", layout="wide")
+require_auth()
 st.title("Projects")
 
 conn = ensure_db()
