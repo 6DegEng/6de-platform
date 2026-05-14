@@ -620,6 +620,20 @@ VALUES
     ('admin',                   65.00, '2026-01-01', 'Administrative/Clerical');
 
 -- ============================================================
+-- Calc Package Auditor — required checks per structure type
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calc_required_checks (
+    id INTEGER PRIMARY KEY,
+    structure_type TEXT NOT NULL,
+    check_label TEXT NOT NULL,
+    code_ref TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'required',
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(structure_type, check_label)
+);
+
+-- ============================================================
 -- ALTER TABLE extensions (idempotent via try/catch in Python)
 -- These columns were added after the initial schema release.
 -- SQLite does not support IF NOT EXISTS for ALTER TABLE,

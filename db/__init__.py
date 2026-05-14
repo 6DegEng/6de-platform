@@ -29,6 +29,7 @@ from config import (
     SCHEMA_PATH,
 )
 from modules.accounting.categorization import seed_rules_from_vba
+from modules.calculator.required_checks import seed_required_checks
 
 # ---------------------------------------------------------------------------
 # Schema deltas applied at startup. Each entry: (table, column, column_type).
@@ -356,6 +357,7 @@ def init_db(db_path: Path | str | None = None) -> None:
     conn = get_connection(db_path)
     _run_migrations(conn)
     seed_rules_from_vba(conn)
+    seed_required_checks(conn)
     seed_juan_as_employee(conn)
     bridge_proposals_to_opportunities(conn)
     conn.close()
@@ -377,6 +379,7 @@ def _ensure_db_impl() -> sqlite3.Connection:
     if new_db or stored_fp != current_fp:
         _run_migrations(conn)
         seed_rules_from_vba(conn)
+        seed_required_checks(conn)
 
     # Seeds are self-idempotent — cheap to call every time.
     seed_juan_as_employee(conn)
