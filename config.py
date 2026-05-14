@@ -61,10 +61,14 @@ DB_DIR = DB_PATH.parent
 # ---------------------------------------------------------------------------
 # Calc engine — read-only bridge into the structural/civil/inspection DBs
 # ---------------------------------------------------------------------------
-_DEFAULT_REF_DB = (
-    r"C:\Users\juanc\OneDrive - 6th Degree Engineering"
-    r"\Documents - 6th Degree Engineering"
-    r"\06_Engineering\02_Services Library\01_Dev\02_Reference DB"
+_DEFAULT_REF_DB = str(
+    Path.home()
+    / "OneDrive - 6th Degree Engineering"
+    / "Documents - 6th Degree Engineering"
+    / "06_Engineering"
+    / "02_Services Library"
+    / "01_Dev"
+    / "02_Reference DB"
 )
 
 CALC_DB_PATH = Path(os.environ.get(
@@ -89,10 +93,15 @@ INSPECTION_DB_PATH = Path(os.environ.get(
 
 CALC_EXE_PATH = Path(os.environ.get(
     "SIXDE_CALC_EXE",
-    r"C:\Users\juanc\OneDrive - 6th Degree Engineering"
-    r"\Documents - 6th Degree Engineering"
-    r"\06_Engineering\02_Services Library\01_Dev"
-    r"\6th Degree Calculator.exe",
+    str(
+        Path.home()
+        / "OneDrive - 6th Degree Engineering"
+        / "Documents - 6th Degree Engineering"
+        / "06_Engineering"
+        / "02_Services Library"
+        / "01_Dev"
+        / "6th Degree Calculator.exe"
+    ),
 ))
 
 # ---------------------------------------------------------------------------

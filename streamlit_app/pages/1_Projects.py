@@ -236,18 +236,19 @@ for tab_idx, tab in enumerate(tabs):
 
                 # --- Edit ---
                 with edit_tab:
-                    with st.form(f"edit_{pid}", clear_on_submit=False):
+                    key_ns = f"t{tab_idx}_p{pid}"
+                    with st.form(f"edit_{key_ns}", clear_on_submit=False):
                         e_col1, e_col2 = st.columns(2)
                         with e_col1:
-                            e_name = st.text_input("Name", value=proj["name"], key=f"en_{pid}")
+                            e_name = st.text_input("Name", value=proj["name"], key=f"en_{key_ns}")
                             e_address = st.text_input(
-                                "Address", value=proj["address"] or "", key=f"ea_{pid}"
+                                "Address", value=proj["address"] or "", key=f"ea_{key_ns}"
                             )
                             e_city = st.text_input(
-                                "City", value=proj["city"] or "Miami", key=f"ec_{pid}"
+                                "City", value=proj["city"] or "Miami", key=f"ec_{key_ns}"
                             )
                             e_scope = st.text_area(
-                                "Scope", value=proj["scope"] or "", key=f"es_{pid}"
+                                "Scope", value=proj["scope"] or "", key=f"es_{key_ns}"
                             )
                         with e_col2:
                             current_statuses = [
@@ -257,30 +258,30 @@ for tab_idx, tab in enumerate(tabs):
                                 "Status",
                                 current_statuses,
                                 index=current_statuses.index(proj["status"]),
-                                key=f"est_{pid}",
+                                key=f"est_{key_ns}",
                             )
                             e_county = st.text_input(
                                 "County",
                                 value=proj["county"] or "Miami-Dade",
-                                key=f"eco_{pid}",
+                                key=f"eco_{key_ns}",
                             )
                             e_start = st.text_input(
                                 "Start Date (YYYY-MM-DD)",
                                 value=proj["start_date"] or "",
-                                key=f"esd_{pid}",
+                                key=f"esd_{key_ns}",
                             )
                             e_target = st.text_input(
                                 "Target End Date (YYYY-MM-DD)",
                                 value=proj["target_end_date"] or "",
-                                key=f"ete_{pid}",
+                                key=f"ete_{key_ns}",
                             )
                             e_actual = st.text_input(
                                 "Actual End Date (YYYY-MM-DD)",
                                 value=proj["actual_end_date"] or "",
-                                key=f"eae_{pid}",
+                                key=f"eae_{key_ns}",
                             )
                         e_notes = st.text_area(
-                            "Notes", value=proj["notes"] or "", key=f"eno_{pid}"
+                            "Notes", value=proj["notes"] or "", key=f"eno_{key_ns}"
                         )
 
                         save_col, delete_col = st.columns([3, 1])
@@ -333,13 +334,13 @@ for tab_idx, tab in enumerate(tabs):
                         )
                         c1, c2, _ = st.columns([1, 1, 3])
                         with c1:
-                            if st.button("Yes, delete", key=f"del_yes_{pid}", type="primary"):
+                            if st.button("Yes, delete", key=f"del_yes_{key_ns}", type="primary"):
                                 delete_project(conn, pid)
                                 st.session_state.pop(f"confirm_delete_{pid}", None)
                                 st.success("Project deleted.")
                                 st.rerun()
                         with c2:
-                            if st.button("Cancel", key=f"del_no_{pid}"):
+                            if st.button("Cancel", key=f"del_no_{key_ns}"):
                                 st.session_state.pop(f"confirm_delete_{pid}", None)
                                 st.rerun()
 
