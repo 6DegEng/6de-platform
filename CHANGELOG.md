@@ -1,5 +1,33 @@
 # Changelog
 
+## Session 35 — 2026-05-14
+
+### Bug Fixes (Critical)
+- B24: Fixed `/Projects` crash from duplicate `st.form` keys when a project appears in both "All" and its status tab. Namespaced all edit-tab widget keys by `t{tab_idx}_p{pid}`.
+- B25: Fixed `/Calculator` "common.db not found" by replacing hardcoded `C:\Users\juanc\...` with `Path.home()` in `config.py`. Improved user-facing error message with resolved path and env var hint.
+- B26: Guarded empty-data bar charts on `/Home` to prevent Vega-Lite `Infinite extent` console warnings.
+
+### Bug Fixes (Carryover)
+- B8: Changed "+N this month" delta query from `created_at` (reflects import date) to `start_date` (reflects actual project start). Only counts active projects.
+- B10: Consolidated dual Outstanding metric cards into one (Row 1), using the higher of invoice-based and project-based outstanding. Replaced the duplicate in Row 1c with Active Rate.
+
+### Engineering Section (New)
+- Renamed `8_Calculator.py` to Engineering page with three top-level tabs: Calculators, Package Auditor, Required-Checks Library.
+- Created `calc_required_checks` table in `schema.sql` with 19 seeded IBC/ASCE/NDS code checks across 6 structure types (Glass Railing, Wall-Mounted Handrail, Steel Stair, Post-installed Anchor, Wood Connection).
+- `modules/calculator/required_checks.py`: Seed data and idempotent loader.
+- `modules/calculator/auditor.py`: `audit_calc_project()` compares calc outputs against required checks, produces `AuditReport` with pass/missing/weak findings. Conservative matching: code_ref + keyword matching.
+- `modules/calculator/cover_sheet.py`: Generates Markdown cover sheet from ERP project + calc project + audit results + PE profile.
+- Package Auditor tab: select linked project, run audit, view findings with red/yellow/green status, download report as `.md`.
+- Required-Checks Library tab: browse all checks by structure type, add new checks via form.
+
+### UI & Polish
+- Centralized empty-state copy in `formatters.empty_state(kind)` — 9 entity types with actionable messages (B20 partial).
+- Version bumped to v3.2.
+
+### Tests
+- 4 new smoke tests: `calc_required_checks` table exists, seed idempotency (re-seed produces same count, >=19), unique constraint, B24 regression guard (static scan for un-namespaced widget keys).
+- All 9 tests pass.
+
 ## Session 33 — 2026-05-12
 
 ### Research & Roadmap (Phases 1-2)

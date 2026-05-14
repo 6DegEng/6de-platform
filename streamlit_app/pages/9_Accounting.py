@@ -786,8 +786,6 @@ with tab_categorization:
 # ---------------------------------------------------------------------------
 # Footer
 # ---------------------------------------------------------------------------
-conn.close()
-
 st.markdown("---")
 st.markdown(
     "<div style='text-align:center;color:#adb5bd;font-size:0.78rem;'>"
