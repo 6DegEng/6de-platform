@@ -45,9 +45,11 @@ def get_dashboard_data(conn: sqlite3.Connection) -> dict:
     data["total_projects"] = row["total"] or 0
     data["active_projects"] = row["active"] or 0
 
-    # New projects this month (for delta on the metric card)
+    # New projects this month — use start_date (not created_at which reflects
+    # bulk-import time and inflates the count). B8 fix.
     row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM projects WHERE created_at >= ?",
+        "SELECT COUNT(*) AS cnt FROM projects "
+        "WHERE start_date >= ? AND status = 'active'",
         (month_start,),
     ).fetchone()
     data["new_projects_this_month"] = row["cnt"] or 0

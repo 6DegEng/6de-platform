@@ -30,6 +30,7 @@ from modules.invoicing.crud import get_ar_aging_report, get_ar_aging_summary
 from streamlit_app.auth import require_auth, show_logout_button
 from streamlit_app.components.formatters import (
     days_until,
+    empty_state,
     format_currency,
     format_currency_compact,
     format_date,
@@ -118,7 +119,7 @@ require_auth()
 with st.sidebar:
     show_logout_button()
     st.markdown("# 6th Degree Engineering")
-    st.caption("ERP Platform v3.1")
+    st.caption("ERP Platform v3.2")
     st.divider()
     st.markdown(
         "Pages load automatically from the **pages/** folder.  "
@@ -157,7 +158,10 @@ with c1:
     st.metric("Active Projects", str(active_n), delta=delta)
 
 with c2:
-    st.metric("Outstanding Revenue", format_currency_compact(data["outstanding_amount"]))
+    outstanding_display = max(
+        data["outstanding_amount"], data.get("project_outstanding", 0)
+    )
+    st.metric("Outstanding", format_currency_compact(outstanding_display))
 
 with c3:
     overdue_val = format_currency_compact(data["overdue_amount"])
@@ -215,8 +219,10 @@ with c10:
     unbilled = data.get("unbilled_time_amount", 0) + data.get("unbilled_expense_amount", 0)
     st.metric("Unbilled Work", format_currency_compact(unbilled))
 with c11:
-    outstanding = data.get("project_outstanding", 0)
-    st.metric("Outstanding (Projects)", format_currency_compact(outstanding))
+    total_projects = data.get("total_projects", 0)
+    active_projects = data.get("active_projects", 0)
+    pct = (active_projects / total_projects * 100) if total_projects else 0
+    st.metric("Active Rate", f"{pct:.0f}%")
 with c12:
     bid_count = len(data.get("upcoming_bid_deadlines", []))
     st.metric("Bid Deadlines", f"{bid_count} upcoming")
@@ -375,7 +381,7 @@ with left_col:
                 unsafe_allow_html=True,
             )
     else:
-        st.info("No recent activity recorded.")
+        st.info(empty_state("activity"))
 
 # --- Quick Actions ---
 with right_col:
@@ -433,12 +439,14 @@ with chart_left:
     st.markdown("**Projects by Status**")
     pbs = data["projects_by_status"]
     if pbs:
-        # Desired display order
         status_order = ["prospect", "active", "on_hold", "completed", "archived"]
         labels = [s.replace("_", " ").title() for s in status_order if s in pbs]
         values = [pbs[s] for s in status_order if s in pbs]
         df = pd.DataFrame({"Status": labels, "Count": values}).set_index("Status")
-        st.bar_chart(df, horizontal=True)
+        if df["Count"].sum() > 0:
+            st.bar_chart(df, horizontal=True)
+        else:
+            st.info("No project data yet.")
     else:
         st.info("No project data yet.")
 
@@ -454,14 +462,12 @@ with chart_right:
         labels = [s.replace("_", " ").title() for s in status_order if s in pmbs]
         values = [pmbs[s] for s in status_order if s in pmbs]
         df = pd.DataFrame({"Status": labels, "Count": values}).set_index("Status")
-        st.bar_chart(df, horizontal=True)
+        if df["Count"].sum() > 0:
+            st.bar_chart(df, horizontal=True)
+        else:
+            st.info("No permit data yet.")
     else:
         st.info("No permit data yet.")
-
-# ---------------------------------------------------------------------------
-# Cleanup
-# ---------------------------------------------------------------------------
-conn.close()
 
 # ---------------------------------------------------------------------------
 # Footer

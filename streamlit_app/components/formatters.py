@@ -117,6 +117,38 @@ def format_percentage(pct: float | int | None) -> str:
     return f"{pct:,.1f}%"
 
 
+# ---------------------------------------------------------------------------
+# Empty-state copy — centralized so every page speaks consistently. B20 fix.
+# ---------------------------------------------------------------------------
+
+_EMPTY_STATE_COPY: dict[str, str] = {
+    "projects": "No projects found. Create one with **Create New Project** above.",
+    "permits": (
+        "No permits tracked yet. Import via `scripts/importers/import_permits.py` "
+        "or add one with **+ Add New Permit** below."
+    ),
+    "bids": (
+        "No bids in this category yet. Add a bid opportunity on the Bids page."
+    ),
+    "calculator": (
+        "Calc engine DB not available. Set the `SIXDE_CALC_DB` environment "
+        "variable or verify your OneDrive sync."
+    ),
+    "activity": "No recent activity recorded.",
+    "linked_calcs": (
+        "No linked calc projects yet. Link one on the Engineering page."
+    ),
+    "invoices": "No invoices found. Create one on the Billing page.",
+    "contacts": "No contacts found.",
+    "proposals": "No proposals found.",
+}
+
+
+def empty_state(kind: str) -> str:
+    """Return user-friendly empty-state copy for the given entity type."""
+    return _EMPTY_STATE_COPY.get(kind, f"No {kind} data yet.")
+
+
 _STATUS_COLORS: dict[str, dict[str, str]] = {
     "project": {
         "prospect":  "#6c757d",
