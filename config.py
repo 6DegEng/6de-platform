@@ -15,6 +15,20 @@ Environment variables (defaults shown):
     SIXDE_DRAINAGE_DB       OneDrive default
     SIXDE_INSPECTION_DB     OneDrive default
     SIXDE_CALC_EXE          OneDrive default        path to PyWebView calc launcher
+
+    MSGRAPH_CLIENT_ID       (unset)                 Entra ID app registration client ID
+    MSGRAPH_TENANT_ID       (unset)                 Entra ID tenant ID
+    MSGRAPH_TOKEN_PATH      %LOCALAPPDATA%\\6de-platform\\graph_token.enc
+    SIXDE_TOKEN_KEY         (unset)                 Fernet key for token encryption (32 url-safe base64 bytes)
+    SIXDE_PROJECTS_ROOT     "06_Engineering/01_ Active Projects"   path under the
+                            "Documents - 6th Degree Engineering" library where
+                            per-project folders live. Leading space in segment 2
+                            is intentional (B27); URL-encoded at the Graph boundary.
+
+When MSGRAPH_CLIENT_ID and MSGRAPH_TENANT_ID are both set, modules.documents.sharepoint
+returns a real GraphServiceClient; otherwise it returns a StubGraphClient suitable
+for offline development and tests. This lets the SharePoint code be exercised
+before the Entra ID app registration is created.
 """
 from __future__ import annotations
 
@@ -111,3 +125,31 @@ AUTH_CONFIG_PATH = Path(os.environ.get(
     "AUTH_CONFIG_PATH",
     str(_PLATFORM_ROOT / "auth_config.yaml"),
 ))
+
+# ---------------------------------------------------------------------------
+# Microsoft Graph / SharePoint (Phase 2)
+# ---------------------------------------------------------------------------
+MSGRAPH_CLIENT_ID = os.environ.get("MSGRAPH_CLIENT_ID")
+MSGRAPH_TENANT_ID = os.environ.get("MSGRAPH_TENANT_ID")
+SIXDE_TOKEN_KEY = os.environ.get("SIXDE_TOKEN_KEY")
+
+
+def _default_graph_token_path() -> Path:
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if localappdata:
+        return Path(localappdata) / "6de-platform" / "graph_token.enc"
+    return Path.home() / ".local" / "share" / "6de-platform" / "graph_token.enc"
+
+
+MSGRAPH_TOKEN_PATH = Path(os.environ.get(
+    "MSGRAPH_TOKEN_PATH",
+    str(_default_graph_token_path()),
+))
+
+# Per Juan 2026-05-21: leading space in "01_ Active Projects" is intentional.
+# Tracked for cleanup as B27 in SESSION36_BUG_BACKLOG.md. Graph-API callers
+# URL-encode this string at the boundary; do not strip or normalize it here.
+SIXDE_PROJECTS_ROOT = os.environ.get(
+    "SIXDE_PROJECTS_ROOT",
+    "06_Engineering/01_ Active Projects",
+)

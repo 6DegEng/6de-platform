@@ -54,6 +54,11 @@ _ALTER_COLUMNS = [
     ("projects", "contact_phone", "TEXT"),
     ("transactions", "source", "TEXT DEFAULT 'excel_sync'"),
     ("opportunities", "source_proposal_id", "INTEGER"),
+    # Phase 2 — SharePoint document layer
+    ("documents", "sharepoint_item_id", "TEXT"),
+    ("documents", "sharepoint_web_url", "TEXT"),
+    ("documents", "sharepoint_drive_id", "TEXT"),
+    ("documents", "sha256", "TEXT"),
 ]
 
 _PROPOSAL_STAGE_MAP = {
