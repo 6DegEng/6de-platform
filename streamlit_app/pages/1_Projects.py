@@ -157,13 +157,22 @@ with st.expander("Create New Project", expanded=False):
                 st.rerun()
 
 # ---------------------------------------------------------------------------
-# Search bar
+# Search bar — wrapped in an st.form so Enter explicitly commits the query.
+# A bare st.text_input shows the browser focus indicator on Enter but doesn't
+# reliably trigger a rerun across all Streamlit versions; the form wrapper
+# binds Enter to form_submit_button, guaranteeing commit.
 # ---------------------------------------------------------------------------
-search_query = st.text_input(
-    "Search projects",
-    placeholder="Search by name, address, or job number ...",
-    label_visibility="collapsed",
-)
+with st.form("project_search_form", clear_on_submit=False, border=False):
+    sf_col1, sf_col2 = st.columns([10, 1])
+    with sf_col1:
+        search_query = st.text_input(
+            "Search projects",
+            placeholder="Search by name, address, or job number ...",
+            label_visibility="collapsed",
+            key="project_search_query",
+        )
+    with sf_col2:
+        st.form_submit_button("Search")
 
 # ---------------------------------------------------------------------------
 # Status filter tabs
