@@ -218,8 +218,13 @@ def test_token_store_read_missing_returns_none(tmp_path):
     assert store.read() is None
 
 
-def test_token_store_without_key_raises(tmp_path):
-    """No SIXDE_TOKEN_KEY -> _TokenStore can't operate."""
+def test_token_store_without_key_raises(tmp_path, monkeypatch):
+    """No SIXDE_TOKEN_KEY -> _TokenStore can't operate.
+
+    Clears the env-derived fallback so this test stays valid once dotenv
+    loading populates SIXDE_TOKEN_KEY for real runs.
+    """
+    monkeypatch.setattr(sp, "SIXDE_TOKEN_KEY", None)
     store = sp.get_token_store(path=tmp_path / "x.enc", key=None)
     with pytest.raises(sp.TokenStoreError):
         store.write({"refresh_token": "x"})

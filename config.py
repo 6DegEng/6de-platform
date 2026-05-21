@@ -37,6 +37,15 @@ from pathlib import Path
 
 _PLATFORM_ROOT = Path(__file__).resolve().parent
 
+# Load .env from the platform root before anything reads os.environ below.
+# python-dotenv is a hard dep (requirements.txt); if it ever goes missing
+# we'd rather fail loudly than silently miss MSGRAPH_* and fall back to stubs.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(_PLATFORM_ROOT / ".env")
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # Database backend selection (Phase 1 seam — Phase 8 will implement postgres)
 # ---------------------------------------------------------------------------
