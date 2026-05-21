@@ -336,3 +336,140 @@ def test_documents_schema_includes_sharepoint_columns(db):
     cols = {r[1] for r in db.execute("PRAGMA table_info(documents)").fetchall()}
     for required in ("sharepoint_item_id", "sharepoint_web_url", "sharepoint_drive_id", "sha256"):
         assert required in cols, f"Phase 2 column {required} missing from documents schema"
+
+
+# ---------------------------------------------------------------------------
+# classify_category — heuristic subfolder → canonical category mapping
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "subfolder,expected",
+    [
+        # Calcs
+        ("Hydraulic Calculations", "Calcs"),
+        ("Drainage Calculations", "Calcs"),
+        ("Calcs", "Calcs"),
+        ("Structural Analysis", "Calcs"),
+        # Drawings
+        ("Drawings", "Drawings"),
+        ("Dwgs", "Drawings"),
+        ("DWGs", "Drawings"),
+        ("Shop Drawings", "Drawings"),
+        ("Renders", "Drawings"),
+        ("Site Photos", "Drawings"),
+        ("Photos", "Drawings"),
+        # Permits
+        ("Permits", "Permits"),
+        ("Permitting", "Permits"),
+        ("Inspection Reports", "Permits"),
+        ("NOA Approvals", "Permits"),
+        # Billing
+        ("Billing", "Billing"),
+        ("Accounting", "Billing"),
+        ("Contract Agreements", "Billing"),
+        ("Invoices", "Billing"),
+        # Correspondence
+        ("Correspondence", "Correspondence"),
+        ("PPT", "Correspondence"),
+        ("Survey", "Correspondence"),
+        ("Geotechnical Engineering", "Correspondence"),
+        ("Product Data", "Correspondence"),
+        # Archive / templates — excluded
+        ("00_Archive", None),
+        ("99_Templates", None),
+        # Truly unrecognized
+        ("RAMP, GLASS RAILING, POOL EQUIPMENT ENCLOSURE", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_classify_category(subfolder, expected):
+    assert sp.classify_category(subfolder) == expected
+
+
+# ---------------------------------------------------------------------------
+# ensure_project_folder idempotency — re-running produces identical IDs
+# ---------------------------------------------------------------------------
+def test_ensure_project_folder_idempotent(stub_client):
+    first = sp.ensure_project_folder("260512", "Idempotency Test", client=stub_client)
+    pre_call_count = len(stub_client.calls)
+    second = sp.ensure_project_folder("260512", "Idempotency Test", client=stub_client)
+    assert first == second
+    # ensure_folder is called again (6 times: root + 5 categories) but folders
+    # dict keys are unchanged. The stub's internal state shows no new folder
+    # IDs were minted.
+    post_call_count = len(stub_client.calls)
+    assert post_call_count - pre_call_count == 6  # root + 5 categories
+    # But no new folder IDs minted
+    assert set(first.values()) == set(second.values())
+
+
+# ---------------------------------------------------------------------------
+# Chunked upload routing — _LARGE_UPLOAD_THRESHOLD boundary cases
+# ---------------------------------------------------------------------------
+def test_upload_routes_below_threshold_to_small(stub_client):
+    payload = b"x" * (sp._LARGE_UPLOAD_THRESHOLD - 1)
+    sp.upload_bytes("260512", "Test", "Calcs", "small.pdf", payload, client=stub_client)
+    small_calls = [c for c in stub_client.calls if c.op == "upload_bytes"]
+    large_calls = [c for c in stub_client.calls if c.op == "upload_large"]
+    assert len(small_calls) == 1
+    assert len(large_calls) == 0
+
+
+def test_upload_routes_at_exact_threshold_to_small(stub_client):
+    """At-threshold (== 4MB) routes to small upload per <= comparison."""
+    payload = b"x" * sp._LARGE_UPLOAD_THRESHOLD
+    sp.upload_bytes("260512", "Test", "Calcs", "exact.pdf", payload, client=stub_client)
+    small_calls = [c for c in stub_client.calls if c.op == "upload_bytes"]
+    assert len(small_calls) == 1
+
+
+def test_upload_routes_above_threshold_to_large(stub_client):
+    payload = b"x" * (sp._LARGE_UPLOAD_THRESHOLD + 1)
+    sp.upload_bytes("260512", "Test", "Drawings", "big.dwg", payload, client=stub_client)
+    large_calls = [c for c in stub_client.calls if c.op == "upload_large"]
+    assert len(large_calls) == 1
+    # Chunks expected
+    chunks = large_calls[0].extra["chunks"]
+    expected = (len(payload) + sp._CHUNK_SIZE - 1) // sp._CHUNK_SIZE
+    assert chunks == expected
+
+
+# ---------------------------------------------------------------------------
+# retry_with_backoff — 429 retry semantics
+# ---------------------------------------------------------------------------
+def test_retry_with_backoff_succeeds_on_eventual_success(monkeypatch):
+    monkeypatch.setattr(sp.time, "sleep", lambda _: None)
+    attempts = {"n": 0}
+
+    def flaky():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("HTTP 429 Too Many Requests")
+        return "ok"
+
+    result = sp.retry_with_backoff(flaky, max_attempts=5, base_delay=0.01)
+    assert result == "ok"
+    assert attempts["n"] == 3
+
+
+def test_retry_with_backoff_raises_after_max_attempts(monkeypatch):
+    monkeypatch.setattr(sp.time, "sleep", lambda _: None)
+
+    def always_fail():
+        raise RuntimeError("HTTP 503 Service Unavailable")
+
+    with pytest.raises(RuntimeError, match="503"):
+        sp.retry_with_backoff(always_fail, max_attempts=3, base_delay=0.01)
+
+
+def test_retry_with_backoff_does_not_swallow_non_throttle_errors(monkeypatch):
+    monkeypatch.setattr(sp.time, "sleep", lambda _: None)
+    attempts = {"n": 0}
+
+    def fails_with_400():
+        attempts["n"] += 1
+        raise RuntimeError("HTTP 400 Bad Request")
+
+    with pytest.raises(RuntimeError, match="400"):
+        sp.retry_with_backoff(fails_with_400, max_attempts=5, base_delay=0.01)
+    assert attempts["n"] == 1  # no retry on 400

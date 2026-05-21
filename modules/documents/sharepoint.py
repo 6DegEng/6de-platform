@@ -52,6 +52,68 @@ from config import (
 
 CATEGORIES = ("Calcs", "Drawings", "Permits", "Billing", "Correspondence")
 
+# Heuristic mapping from real-world subfolder names to canonical Phase 2
+# categories. Order matters — first match wins. Patterns are lowercased and
+# substring-matched. Returns None when no rule applies; callers default to
+# "Correspondence" or surface a warning.
+_CATEGORY_PATTERNS: tuple[tuple[str, str], ...] = (
+    # Calcs — calculation packages, engineering analysis output
+    ("calc", "Calcs"),
+    ("calculation", "Calcs"),
+    ("hydraulic", "Calcs"),
+    ("drainage", "Calcs"),
+    ("structural analysis", "Calcs"),
+    # Drawings — CAD, shop drawings, renderings, plans, photos that document the site
+    ("drawing", "Drawings"),
+    ("dwg", "Drawings"),
+    ("render", "Drawings"),
+    ("plan", "Drawings"),
+    ("shop draw", "Drawings"),
+    ("site photo", "Drawings"),
+    ("photo", "Drawings"),
+    # Permits — permit applications, inspection reports
+    ("permit", "Permits"),
+    ("inspection", "Permits"),
+    ("noa", "Permits"),  # Notice of Acceptance — Miami-Dade-specific
+    # Billing — invoices, contracts, accounting
+    ("billing", "Billing"),
+    ("invoice", "Billing"),
+    ("account", "Billing"),
+    ("contract", "Billing"),
+    ("proposal", "Billing"),
+    ("payment", "Billing"),
+    # Correspondence — emails, letters, meeting notes, reference docs
+    ("correspondence", "Correspondence"),
+    ("email", "Correspondence"),
+    ("letter", "Correspondence"),
+    ("meeting", "Correspondence"),
+    ("memo", "Correspondence"),
+    ("ppt", "Correspondence"),
+    ("presentation", "Correspondence"),
+    ("survey", "Correspondence"),
+    ("geotech", "Correspondence"),
+    ("product data", "Correspondence"),
+    ("spec", "Correspondence"),
+)
+
+
+def classify_category(subfolder_name: str | None) -> str | None:
+    """Map a real-world subfolder name to one of the 5 canonical categories.
+
+    Returns None when no heuristic matches. Callers can default to
+    "Correspondence" (safest catch-all) or log the unmatched name for
+    later taxonomy work. Substring match on lowercased input.
+    """
+    if not subfolder_name:
+        return None
+    needle = subfolder_name.lower()
+    if needle.startswith("00_") or needle.startswith("99_"):
+        return None  # archive/template — exclude from indexing
+    for pattern, category in _CATEGORY_PATTERNS:
+        if pattern in needle:
+            return category
+    return None
+
 # Strip SharePoint/Windows-illegal chars plus C0 control chars EXCEPT whitespace
 # (tab/LF/CR), which we convert to spaces below so they collapse via the
 # whitespace pass. This matches NTFS rules and the Phase 2 spec.

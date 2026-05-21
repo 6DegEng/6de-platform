@@ -20,7 +20,7 @@ _PLATFORM_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
-from config import CALC_EXE_PATH  # noqa: E402
+from config import CALC_EXE_PATH, MSGRAPH_CLIENT_ID, MSGRAPH_TENANT_ID  # noqa: E402
 from db import ensure_db, get_calc_connection  # noqa: E402
 from modules.calculator.bridge import (  # noqa: E402
     get_calc_outputs,
@@ -28,6 +28,8 @@ from modules.calculator.bridge import (  # noqa: E402
     link_calc_to_erp,
     read_calc_projects,
 )
+from modules.documents.crud import list_documents  # noqa: E402
+from modules.documents.sharepoint import CATEGORIES  # noqa: E402
 from modules.projects.crud import (  # noqa: E402
     create_milestone,
     create_project,
@@ -206,8 +208,8 @@ for tab_idx, tab in enumerate(tabs):
 
             with st.expander(f"{badge}  **{header}**"):
                 # ---- Detail / edit section ----
-                detail_tab, edit_tab, milestone_tab, calc_tab = st.tabs(
-                    ["Details", "Edit", "Milestones", "Calculations"]
+                detail_tab, edit_tab, milestone_tab, calc_tab, docs_tab = st.tabs(
+                    ["Details", "Edit", "Milestones", "Calculations", "Documents"]
                 )
 
                 # --- Details ---
@@ -546,3 +548,72 @@ for tab_idx, tab in enumerate(tabs):
 
                     if calc_conn is not None:
                         calc_conn.close()
+
+                # --- Documents (Phase 2 — SharePoint document layer) ---
+                with docs_tab:
+                    docs = list_documents(conn, entity_type="project", entity_id=pid)
+                    sharepoint_configured = bool(MSGRAPH_CLIENT_ID and MSGRAPH_TENANT_ID)
+
+                    status_col, count_col = st.columns([3, 1])
+                    with status_col:
+                        if sharepoint_configured:
+                            st.caption("✅ SharePoint configured")
+                        else:
+                            st.caption(
+                                "⚙️ SharePoint not configured — set `MSGRAPH_CLIENT_ID` "
+                                "and `MSGRAPH_TENANT_ID` to enable uploads. "
+                                "Indexed files below still link to OneDrive."
+                            )
+                    with count_col:
+                        st.metric("Documents", len(docs))
+
+                    if not docs:
+                        st.info(
+                            "No documents indexed yet. Run "
+                            "`python scripts/scan_existing_project_docs.py --commit "
+                            f"--job {proj['job_number']}` to backfill from OneDrive."
+                        )
+                    else:
+                        # Group by category. Category lives in notes JSON (backfilled)
+                        # or is derivable from file_path's penultimate segment.
+                        import json as _json
+                        grouped: dict[str, list] = {c: [] for c in CATEGORIES}
+                        ungrouped: list = []
+                        for doc in docs:
+                            category = None
+                            if doc["notes"]:
+                                try:
+                                    meta = _json.loads(doc["notes"])
+                                    category = meta.get("category")
+                                except (ValueError, TypeError):
+                                    pass
+                            if not category and doc["file_path"]:
+                                # Derive from path: .../{NUM}_{NAME}/{CATEGORY}/file
+                                parts = doc["file_path"].split("/")
+                                if len(parts) >= 2 and parts[-2] in CATEGORIES:
+                                    category = parts[-2]
+                            if category in CATEGORIES:
+                                grouped[category].append(doc)
+                            else:
+                                ungrouped.append(doc)
+
+                        for category in CATEGORIES:
+                            items = grouped[category]
+                            if not items:
+                                continue
+                            st.markdown(f"**{category}** ({len(items)})")
+                            for doc in items:
+                                row_a, row_b = st.columns([5, 2])
+                                with row_a:
+                                    st.write(f"📄 {doc['file_name']}")
+                                with row_b:
+                                    if doc["sharepoint_web_url"]:
+                                        st.markdown(
+                                            f"[Open in SharePoint]({doc['sharepoint_web_url']})"
+                                        )
+                                    elif doc["file_path"]:
+                                        st.caption(f"`{doc['file_path']}`")
+                        if ungrouped:
+                            with st.expander(f"Uncategorized ({len(ungrouped)})"):
+                                for doc in ungrouped:
+                                    st.write(f"📄 {doc['file_name']}  —  `{doc['file_path']}`")
