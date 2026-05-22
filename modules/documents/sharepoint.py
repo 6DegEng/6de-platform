@@ -410,19 +410,21 @@ class RealGraphClient:
     _graph_client: Any
     _site_id: str | None = None
     _drive_id: str | None = None
-    _resolve_lock: threading.Lock = field(default_factory=threading.Lock)
 
     # ----- internal: site/drive resolution -----------------------------------
-    @property
-    def drive_id(self) -> str:
-        """Lazily resolve and cache the default-drive id for the configured
-        SharePoint site. Single round-trip per process."""
+    async def _ensure_drive_id(self) -> str:
+        """Async-safe lazy resolver for the default drive id. Internal async
+        methods MUST call this instead of touching ``self._drive_id`` directly,
+        otherwise the first call would have to wrap ``_resolve_site_and_drive``
+        in ``asyncio.run()`` — which deadlocks because we're already inside
+        the event loop spun up by the outer ``asyncio.run()`` in the sync
+        wrapper. Single round-trip per process; idempotent if a race ever
+        runs the resolver twice (the cached value just gets overwritten with
+        the same id)."""
         if self._drive_id is not None:
             return self._drive_id
-        with self._resolve_lock:
-            if self._drive_id is None:
-                self._site_id, self._drive_id = asyncio.run(self._resolve_site_and_drive())
-        return self._drive_id  # type: ignore[return-value]
+        self._site_id, self._drive_id = await self._resolve_site_and_drive()
+        return self._drive_id
 
     async def _resolve_site_and_drive(self) -> tuple[str, str]:
         # Graph path-style site lookup: /sites/{hostname}:{site-relative-path}
@@ -450,7 +452,7 @@ class RealGraphClient:
         from msgraph.generated.models.folder import Folder
         from msgraph.generated.models.o_data_errors.o_data_error import ODataError
 
-        drive_id = self.drive_id
+        drive_id = await self._ensure_drive_id()
         segments = [s for s in path.split("/") if s]
         if not segments:
             raise ValueError("ensure_folder() requires a non-empty path.")
@@ -508,7 +510,7 @@ class RealGraphClient:
     async def _upload_bytes_async(
         self, path: str, content: bytes, *, content_type: str | None = None
     ) -> dict[str, Any]:
-        drive_id = self.drive_id
+        drive_id = await self._ensure_drive_id()
         # Ensure parent folder hierarchy exists before PUTing content.
         parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
         if parent_path:
@@ -538,7 +540,7 @@ class RealGraphClient:
         )
         from msgraph_core.tasks.large_file_upload import LargeFileUploadTask
 
-        drive_id = self.drive_id
+        drive_id = await self._ensure_drive_id()
         parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
         basename = path.rsplit("/", 1)[-1]
         if parent_path:
@@ -578,7 +580,7 @@ class RealGraphClient:
     async def _get_link_async(self, item_id: str) -> str:
         from msgraph.generated.models.o_data_errors.o_data_error import ODataError
 
-        drive_id = self.drive_id
+        drive_id = await self._ensure_drive_id()
         try:
             item = await (
                 self._graph_client.drives.by_drive_id(drive_id)
@@ -600,7 +602,7 @@ class RealGraphClient:
     async def _delete_async(self, item_id: str) -> None:
         from msgraph.generated.models.o_data_errors.o_data_error import ODataError
 
-        drive_id = self.drive_id
+        drive_id = await self._ensure_drive_id()
         try:
             await (
                 self._graph_client.drives.by_drive_id(drive_id)
@@ -617,7 +619,7 @@ class RealGraphClient:
         return asyncio.run(self._list_folder_async(path))
 
     async def _list_folder_async(self, path: str) -> list[dict[str, Any]]:
-        drive_id = self.drive_id
+        drive_id = await self._ensure_drive_id()
         builder = (
             self._graph_client.drives.by_drive_id(drive_id)
             .items.by_drive_item_id(f"root:/{encode_path(path)}:")
