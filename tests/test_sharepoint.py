@@ -10,6 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
 import sys
@@ -478,3 +479,147 @@ def test_retry_with_backoff_does_not_swallow_non_throttle_errors(monkeypatch):
     with pytest.raises(RuntimeError, match="400"):
         sp.retry_with_backoff(fails_with_400, max_attempts=5, base_delay=0.01)
     assert attempts["n"] == 1  # no retry on 400
+
+
+# ---------------------------------------------------------------------------
+# retry_with_backoff_async — structured 429/5xx detection + Retry-After
+# ---------------------------------------------------------------------------
+class _FakeODataError(Exception):
+    """Stand-in for msgraph-sdk's ODataError exposing the attributes the
+    structured-retry helper reads (``response_status_code`` and
+    ``response_headers``)."""
+
+    def __init__(self, status_code, headers=None, message="throttled"):
+        super().__init__(message)
+        self.response_status_code = status_code
+        self.response_headers = headers or {}
+
+
+def test_retry_async_honors_retry_after(monkeypatch):
+    """A Retry-After header on a 429 must dictate the sleep duration (capped
+    at max_delay) instead of the exponential-backoff schedule."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(sp.asyncio, "sleep", fake_sleep)
+
+    attempts = {"n": 0}
+    exc = _FakeODataError(
+        status_code=429,
+        headers={"Retry-After": "1"},
+        message="HTTP 429 Throttled",
+    )
+
+    async def factory():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise exc
+        return "ok"
+
+    result = asyncio.run(
+        sp.retry_with_backoff_async(factory, max_attempts=5, base_delay=10.0, max_delay=60.0)
+    )
+    assert result == "ok"
+    assert attempts["n"] == 3
+    # Two sleeps (between attempts 1->2 and 2->3); both Retry-After=1, which
+    # is well below the exponential schedule's first delay (>= 10s).
+    assert len(sleeps) == 2
+    for delay in sleeps:
+        assert delay == pytest.approx(1.0)
+
+
+def test_retry_async_retries_on_structured_5xx(monkeypatch):
+    """A structured 503 (no Retry-After) retries via the exponential schedule."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(sp.asyncio, "sleep", fake_sleep)
+
+    attempts = {"n": 0}
+
+    async def factory():
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise _FakeODataError(status_code=503, message="HTTP 503")
+        return "ok"
+
+    result = asyncio.run(
+        sp.retry_with_backoff_async(factory, max_attempts=3, base_delay=0.01, max_delay=1.0)
+    )
+    assert result == "ok"
+    assert attempts["n"] == 2
+    assert len(sleeps) == 1
+    assert sleeps[0] <= 1.0  # capped at max_delay
+
+
+def test_retry_async_reraises_non_transient_immediately(monkeypatch):
+    """A 400 (structured) must NOT be retried — re-raised on first attempt."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(sp.asyncio, "sleep", fake_sleep)
+
+    attempts = {"n": 0}
+
+    async def factory():
+        attempts["n"] += 1
+        raise _FakeODataError(status_code=400, message="HTTP 400 Bad Request")
+
+    with pytest.raises(_FakeODataError):
+        asyncio.run(
+            sp.retry_with_backoff_async(factory, max_attempts=5, base_delay=0.01)
+        )
+    assert attempts["n"] == 1
+    assert sleeps == []  # no sleep before re-raise
+
+
+def test_retry_async_string_fallback_for_non_odata_errors(monkeypatch):
+    """Plain exceptions whose ``str`` contains '429' or '503' still retry
+    via the string fallback (back-compat with the sync helper's contract)."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(sp.asyncio, "sleep", fake_sleep)
+
+    attempts = {"n": 0}
+
+    async def factory():
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise RuntimeError("HTTP 429 Too Many Requests")
+        return "ok"
+
+    result = asyncio.run(
+        sp.retry_with_backoff_async(factory, max_attempts=3, base_delay=0.01, max_delay=1.0)
+    )
+    assert result == "ok"
+    assert attempts["n"] == 2
+    assert len(sleeps) == 1
+
+
+def test_retry_async_exhausts_and_reraises(monkeypatch):
+    """After ``max_attempts`` transient failures, the last exception is raised."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(sp.asyncio, "sleep", fake_sleep)
+
+    async def always_throttled():
+        raise _FakeODataError(status_code=429, message="HTTP 429")
+
+    with pytest.raises(_FakeODataError):
+        asyncio.run(
+            sp.retry_with_backoff_async(always_throttled, max_attempts=3, base_delay=0.01, max_delay=1.0)
+        )
+    # max_attempts=3 -> 2 sleeps (between attempts, not after the last).
+    assert len(sleeps) == 2

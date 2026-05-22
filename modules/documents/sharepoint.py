@@ -35,6 +35,7 @@ import asyncio
 import hashlib
 import io
 import json
+import random
 import re
 import sqlite3
 import threading
@@ -489,13 +490,14 @@ class RealGraphClient:
         if not segments:
             raise ValueError("ensure_folder() requires a non-empty path.")
 
-        # Start at the drive root, then create or fetch each successive segment.
-        # parent_id == "root" is a Graph alias for the drive root drive item.
-        parent_id = "root"
-        cumulative: list[str] = []
-        leaf_id: str | None = None
-        for seg in segments:
-            cumulative.append(seg)
+        async def _ensure_one(parent_id: str, seg: str, cumulative: list[str]) -> str:
+            """Create-or-resolve a single folder segment.
+
+            Wrapped in ``retry_with_backoff_async`` so transient 429/5xx on
+            the POST (or on the 409→GET conflict path) are retried with
+            backoff. The 409 conflict-resolved-by-GET path is NOT a throttle
+            and is handled inline here, not as a retry.
+            """
             new_folder = DriveItem(
                 name=seg,
                 folder=Folder(),
@@ -511,7 +513,7 @@ class RealGraphClient:
                     raise RuntimeError(
                         f"ensure_folder POST returned no driveItem for segment {seg!r}."
                     )
-                leaf_id = created.id
+                return created.id
             except ODataError as exc:
                 if _odata_status_code(exc) == 409 or "nameAlreadyExists" in (str(exc) or ""):
                     # Folder already exists — fetch it via path-style addressing.
@@ -525,9 +527,21 @@ class RealGraphClient:
                         raise RuntimeError(
                             f"409 on POST but GET returned no driveItem for {item_path!r}."
                         ) from exc
-                    leaf_id = existing.id
-                else:
-                    raise
+                    return existing.id
+                raise
+
+        # Start at the drive root, then create or fetch each successive segment.
+        # parent_id == "root" is a Graph alias for the drive root drive item.
+        parent_id = "root"
+        cumulative: list[str] = []
+        leaf_id: str | None = None
+        for seg in segments:
+            cumulative.append(seg)
+            snapshot = list(cumulative)
+            current_parent = parent_id
+            leaf_id = await retry_with_backoff_async(
+                lambda: _ensure_one(current_parent, seg, snapshot)
+            )
             parent_id = leaf_id  # walk into the just-created/existing folder
 
         assert leaf_id is not None  # invariant: loop ran at least once
@@ -544,15 +558,21 @@ class RealGraphClient:
     ) -> dict[str, Any]:
         drive_id = await self._ensure_drive_id()
         # Ensure parent folder hierarchy exists before PUTing content.
+        # _ensure_folder_async is itself retry-wrapped per segment, so we
+        # don't double-wrap it here.
         parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
         if parent_path:
             await self._ensure_folder_async(parent_path)
-        item = await (
-            self._graph_client.drives.by_drive_id(drive_id)
-            .items.by_drive_item_id(f"root:/{encode_path(path)}:")
-            .content.put(content)
-        )
-        return _driveitem_to_dict(item)
+
+        async def _do_put() -> dict[str, Any]:
+            item = await (
+                self._graph_client.drives.by_drive_id(drive_id)
+                .items.by_drive_item_id(f"root:/{encode_path(path)}:")
+                .content.put(content)
+            )
+            return _driveitem_to_dict(item)
+
+        return await retry_with_backoff_async(_do_put)
 
     # ----- upload_large -----------------------------------------------------
     def upload_large(
@@ -578,32 +598,35 @@ class RealGraphClient:
         if parent_path:
             await self._ensure_folder_async(parent_path)
 
-        upload_props = DriveItemUploadableProperties(
-            name=basename,
-            additional_data={"@microsoft.graph.conflictBehavior": "replace"},
-        )
-        body = CreateUploadSessionPostRequestBody(item=upload_props)
-        session = await (
-            self._graph_client.drives.by_drive_id(drive_id)
-            .items.by_drive_item_id(f"root:/{encode_path(path)}:")
-            .create_upload_session.post(body)
-        )
-        if session is None or getattr(session, "upload_url", None) is None:
-            raise RuntimeError("createUploadSession returned no upload_url.")
+        async def _do_upload() -> dict[str, Any]:
+            upload_props = DriveItemUploadableProperties(
+                name=basename,
+                additional_data={"@microsoft.graph.conflictBehavior": "replace"},
+            )
+            body = CreateUploadSessionPostRequestBody(item=upload_props)
+            session = await (
+                self._graph_client.drives.by_drive_id(drive_id)
+                .items.by_drive_item_id(f"root:/{encode_path(path)}:")
+                .create_upload_session.post(body)
+            )
+            if session is None or getattr(session, "upload_url", None) is None:
+                raise RuntimeError("createUploadSession returned no upload_url.")
 
-        stream = io.BytesIO(content)
-        task = LargeFileUploadTask(
-            upload_session=session,
-            request_adapter=self._graph_client.request_adapter,
-            stream=stream,
-            parsable_factory=DriveItem,
-            max_chunk_size=_CHUNK_SIZE,
-        )
-        result = await task.upload()
-        # LargeFileUploadTask.upload() returns the final DriveItem (or wraps it
-        # via UploadResult.item_response on newer kiota releases).
-        item = getattr(result, "item_response", result)
-        return _driveitem_to_dict(item)
+            stream = io.BytesIO(content)
+            task = LargeFileUploadTask(
+                upload_session=session,
+                request_adapter=self._graph_client.request_adapter,
+                stream=stream,
+                parsable_factory=DriveItem,
+                max_chunk_size=_CHUNK_SIZE,
+            )
+            result = await task.upload()
+            # LargeFileUploadTask.upload() returns the final DriveItem (or wraps it
+            # via UploadResult.item_response on newer kiota releases).
+            item = getattr(result, "item_response", result)
+            return _driveitem_to_dict(item)
+
+        return await retry_with_backoff_async(_do_upload)
 
     # ----- get_link ---------------------------------------------------------
     def get_link(self, item_id: str) -> str:
@@ -635,16 +658,22 @@ class RealGraphClient:
         from msgraph.generated.models.o_data_errors.o_data_error import ODataError
 
         drive_id = await self._ensure_drive_id()
-        try:
-            await (
-                self._graph_client.drives.by_drive_id(drive_id)
-                .items.by_drive_item_id(item_id)
-                .delete()
-            )
-        except ODataError as exc:
-            if _odata_status_code(exc) == 404:
-                raise DocumentMissingError(item_id) from exc
-            raise
+
+        async def _do_delete() -> None:
+            try:
+                await (
+                    self._graph_client.drives.by_drive_id(drive_id)
+                    .items.by_drive_item_id(item_id)
+                    .delete()
+                )
+            except ODataError as exc:
+                # 404 is a terminal "missing" — translate and re-raise so the
+                # retry helper sees a non-transient error and bails out.
+                if _odata_status_code(exc) == 404:
+                    raise DocumentMissingError(item_id) from exc
+                raise
+
+        await retry_with_backoff_async(_do_delete)
 
     # ----- list_folder ------------------------------------------------------
     def list_folder(self, path: str) -> list[dict[str, Any]]:
@@ -941,3 +970,104 @@ def retry_with_backoff(fn, *, max_attempts: int = 5, base_delay: float = 1.0):
             last_exc = exc
             time.sleep(base_delay * (2 ** attempt))
     raise last_exc  # type: ignore[misc]
+
+
+def _is_transient_graph_error(exc: Exception) -> bool:
+    """Decide whether ``exc`` should trigger a retry.
+
+    Preferred path: structured detection via ``_odata_status_code(exc)`` —
+    retry on 429 (throttling) or any 5xx (server error).
+
+    Fallback path (non-ODataError exceptions raised in test fixtures or by
+    layers that have lost the SDK exception type): string-match "429" or
+    "503" in ``str(exc)`` to mirror the sync ``retry_with_backoff`` helper.
+    """
+    code = _odata_status_code(exc)
+    if isinstance(code, int):
+        if code == 429:
+            return True
+        if 500 <= code <= 599:
+            return True
+        # Any other structured code (4xx other than 429) is non-transient.
+        return False
+    msg = str(exc)
+    return "429" in msg or "503" in msg
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Extract ``Retry-After`` (seconds) from an SDK exception's headers.
+
+    Graph returns ``Retry-After`` either as a decimal seconds value or an
+    HTTP-date. Only the seconds form is honored here — HTTP-date parsing is
+    out of scope for the retry-hardener (Phase-3 polish). Returns None when
+    the header is missing, non-numeric, or non-positive.
+    """
+    headers = getattr(exc, "response_headers", None)
+    if headers is None:
+        return None
+    # SDK headers are typically dict-like, but kiota uses a case-insensitive
+    # multi-dict. Try the obvious accessors before giving up.
+    raw: Any = None
+    if hasattr(headers, "get"):
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw is None:
+        try:
+            raw = headers["Retry-After"]  # type: ignore[index]
+        except (KeyError, TypeError):
+            raw = None
+    if raw is None:
+        return None
+    # Some SDKs return list-valued headers.
+    if isinstance(raw, (list, tuple)) and raw:
+        raw = raw[0]
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+async def retry_with_backoff_async(
+    coro_factory,
+    *,
+    max_attempts: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 60.0,
+):
+    """Async sibling of :func:`retry_with_backoff` for coroutine factories.
+
+    ``coro_factory`` is a zero-arg callable that returns a fresh coroutine
+    each attempt (you can't await the same coroutine twice). On a transient
+    Graph error (429 or 5xx, detected structurally via
+    ``_odata_status_code`` or — as a fallback — by string match on the
+    exception message), this helper sleeps and retries up to
+    ``max_attempts`` times. Sleep duration honors the ``Retry-After``
+    response header when present and positive; otherwise it follows an
+    exponential schedule with random jitter, capped at ``max_delay``.
+
+    On any other exception, the original is re-raised immediately. After
+    ``max_attempts`` failed attempts, the last exception is re-raised.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return await coro_factory()
+        except Exception as exc:  # noqa: BLE001 — Graph SDK exceptions vary
+            if not _is_transient_graph_error(exc):
+                raise
+            last_exc = exc
+            if attempt == max_attempts - 1:
+                break
+            retry_after = _retry_after_seconds(exc)
+            if retry_after is not None:
+                delay = min(retry_after, max_delay)
+            else:
+                delay = min(
+                    base_delay * (2 ** attempt) + random.uniform(0, base_delay),
+                    max_delay,
+                )
+            await asyncio.sleep(delay)
+    assert last_exc is not None  # invariant: we only reach here after a caught exc
+    raise last_exc
