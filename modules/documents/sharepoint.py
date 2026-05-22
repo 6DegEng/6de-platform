@@ -31,7 +31,9 @@ Phase 5 migration TODO (when the ``users`` table lands):
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import io
 import json
 import re
 import sqlite3
@@ -46,6 +48,8 @@ from config import (
     MSGRAPH_CLIENT_ID,
     MSGRAPH_TENANT_ID,
     MSGRAPH_TOKEN_PATH,
+    SIXDE_GRAPH_HOSTNAME,
+    SIXDE_GRAPH_SITE_PATH,
     SIXDE_PROJECTS_ROOT,
     SIXDE_TOKEN_KEY,
 )
@@ -193,6 +197,17 @@ class TokenStoreError(RuntimeError):
     """Raised when the encrypted token store cannot be read/written."""
 
 
+class DocumentMissingError(RuntimeError):
+    """Raised when a SharePoint drive item cannot be found (Graph 404).
+
+    Wraps the underlying SDK exception so callers can catch a stable, module-
+    level type without importing msgraph-sdk. ``delete()`` is NOT silent on
+    404 — callers wanting idempotent delete should
+    ``try: delete(id); except DocumentMissingError: pass``. ``get_link()``
+    likewise propagates this on missing items.
+    """
+
+
 @dataclass
 class _TokenStore:
     """Read/write the Fernet-encrypted Graph refresh token blob.
@@ -338,6 +353,289 @@ class StubGraphClient:
         ]
 
 
+def _driveitem_to_dict(item: Any) -> dict[str, Any]:
+    """Project an msgraph-sdk ``DriveItem`` (snake_case attributes) onto the
+    camelCase dict shape the rest of the module + tests expect.
+
+    Keeping this translation at the boundary means ``record_upload`` and every
+    downstream consumer reads the same dict whether the upload came from the
+    stub or the live Graph client. See docs/specs/sharepoint_session_2c.md §3.2
+    for the full mismatch table.
+    """
+    if item is None:
+        return {}
+    parent = getattr(item, "parent_reference", None)
+    file_obj = getattr(item, "file", None)
+    hashes = getattr(file_obj, "hashes", None) if file_obj else None
+    file_payload: dict[str, Any] | None = None
+    if hashes is not None:
+        file_payload = {
+            "hashes": {
+                "quickXorHash": getattr(hashes, "quick_xor_hash", None),
+            }
+        }
+    return {
+        "id": getattr(item, "id", None),
+        "name": getattr(item, "name", None),
+        "size": getattr(item, "size", None),
+        "webUrl": getattr(item, "web_url", None),
+        "parentReference": {
+            "driveId": getattr(parent, "drive_id", None) if parent else None,
+            "path": getattr(parent, "path", None) if parent else None,
+        },
+        "file": file_payload,
+    }
+
+
+def _odata_status_code(exc: Exception) -> int | None:
+    """Extract the HTTP status code from an msgraph-sdk ``ODataError``.
+
+    The SDK exposes ``response_status_code`` directly; callers don't need to
+    import the SDK exception type. Returns ``None`` for non-Graph errors.
+    """
+    return getattr(exc, "response_status_code", None)
+
+
+@dataclass
+class RealGraphClient:
+    """Live Microsoft Graph client wrapper. Duck-types ``StubGraphClient`` so
+    the module-level dispatch (``hasattr(client, "upload_bytes")``) routes
+    here when env vars are set.
+
+    Sync-over-async: msgraph-sdk is async-first; this wrapper calls
+    ``asyncio.run()`` per method so the existing sync call sites stay sync.
+    True async migration is a Phase 2 follow-up.
+    """
+
+    _graph_client: Any
+    _site_id: str | None = None
+    _drive_id: str | None = None
+    _resolve_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    # ----- internal: site/drive resolution -----------------------------------
+    @property
+    def drive_id(self) -> str:
+        """Lazily resolve and cache the default-drive id for the configured
+        SharePoint site. Single round-trip per process."""
+        if self._drive_id is not None:
+            return self._drive_id
+        with self._resolve_lock:
+            if self._drive_id is None:
+                self._site_id, self._drive_id = asyncio.run(self._resolve_site_and_drive())
+        return self._drive_id  # type: ignore[return-value]
+
+    async def _resolve_site_and_drive(self) -> tuple[str, str]:
+        # Graph path-style site lookup: /sites/{hostname}:{site-relative-path}
+        site_key = f"{SIXDE_GRAPH_HOSTNAME}:{SIXDE_GRAPH_SITE_PATH}"
+        site = await self._graph_client.sites.by_site_id(site_key).get()
+        if site is None or site.id is None:
+            raise RuntimeError(
+                f"SharePoint site lookup failed for {site_key!r}. "
+                "Verify SIXDE_GRAPH_HOSTNAME / SIXDE_GRAPH_SITE_PATH."
+            )
+        drive = await self._graph_client.sites.by_site_id(site.id).drive.get()
+        if drive is None or drive.id is None:
+            raise RuntimeError(
+                f"Default drive lookup failed for site {site.id!r}. "
+                "Confirm the site has a default document library."
+            )
+        return site.id, drive.id
+
+    # ----- ensure_folder ----------------------------------------------------
+    def ensure_folder(self, path: str) -> str:
+        return asyncio.run(self._ensure_folder_async(path))
+
+    async def _ensure_folder_async(self, path: str) -> str:
+        from msgraph.generated.models.drive_item import DriveItem
+        from msgraph.generated.models.folder import Folder
+        from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+
+        drive_id = self.drive_id
+        segments = [s for s in path.split("/") if s]
+        if not segments:
+            raise ValueError("ensure_folder() requires a non-empty path.")
+
+        # Start at the drive root, then create or fetch each successive segment.
+        # parent_id == "root" is a Graph alias for the drive root drive item.
+        parent_id = "root"
+        cumulative: list[str] = []
+        leaf_id: str | None = None
+        for seg in segments:
+            cumulative.append(seg)
+            new_folder = DriveItem(
+                name=seg,
+                folder=Folder(),
+                additional_data={"@microsoft.graph.conflictBehavior": "fail"},
+            )
+            try:
+                created = await (
+                    self._graph_client.drives.by_drive_id(drive_id)
+                    .items.by_drive_item_id(parent_id)
+                    .children.post(new_folder)
+                )
+                if created is None or created.id is None:
+                    raise RuntimeError(
+                        f"ensure_folder POST returned no driveItem for segment {seg!r}."
+                    )
+                leaf_id = created.id
+            except ODataError as exc:
+                if _odata_status_code(exc) == 409 or "nameAlreadyExists" in (str(exc) or ""):
+                    # Folder already exists — fetch it via path-style addressing.
+                    item_path = "/".join(cumulative)
+                    existing = await (
+                        self._graph_client.drives.by_drive_id(drive_id)
+                        .items.by_drive_item_id(f"root:/{encode_path(item_path)}:")
+                        .get()
+                    )
+                    if existing is None or existing.id is None:
+                        raise RuntimeError(
+                            f"409 on POST but GET returned no driveItem for {item_path!r}."
+                        ) from exc
+                    leaf_id = existing.id
+                else:
+                    raise
+            parent_id = leaf_id  # walk into the just-created/existing folder
+
+        assert leaf_id is not None  # invariant: loop ran at least once
+        return leaf_id
+
+    # ----- upload_bytes -----------------------------------------------------
+    def upload_bytes(
+        self, path: str, content: bytes, *, content_type: str | None = None
+    ) -> dict[str, Any]:
+        return asyncio.run(self._upload_bytes_async(path, content, content_type=content_type))
+
+    async def _upload_bytes_async(
+        self, path: str, content: bytes, *, content_type: str | None = None
+    ) -> dict[str, Any]:
+        drive_id = self.drive_id
+        # Ensure parent folder hierarchy exists before PUTing content.
+        parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
+        if parent_path:
+            await self._ensure_folder_async(parent_path)
+        item = await (
+            self._graph_client.drives.by_drive_id(drive_id)
+            .items.by_drive_item_id(f"root:/{encode_path(path)}:")
+            .content.put(content)
+        )
+        return _driveitem_to_dict(item)
+
+    # ----- upload_large -----------------------------------------------------
+    def upload_large(
+        self, path: str, content: bytes, *, content_type: str | None = None
+    ) -> dict[str, Any]:
+        return asyncio.run(self._upload_large_async(path, content, content_type=content_type))
+
+    async def _upload_large_async(
+        self, path: str, content: bytes, *, content_type: str | None = None
+    ) -> dict[str, Any]:
+        from msgraph.generated.drives.item.items.item.create_upload_session.create_upload_session_post_request_body import (
+            CreateUploadSessionPostRequestBody,
+        )
+        from msgraph.generated.models.drive_item import DriveItem
+        from msgraph.generated.models.drive_item_uploadable_properties import (
+            DriveItemUploadableProperties,
+        )
+        from msgraph_core.tasks.large_file_upload import LargeFileUploadTask
+
+        drive_id = self.drive_id
+        parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
+        basename = path.rsplit("/", 1)[-1]
+        if parent_path:
+            await self._ensure_folder_async(parent_path)
+
+        upload_props = DriveItemUploadableProperties(
+            name=basename,
+            additional_data={"@microsoft.graph.conflictBehavior": "replace"},
+        )
+        body = CreateUploadSessionPostRequestBody(item=upload_props)
+        session = await (
+            self._graph_client.drives.by_drive_id(drive_id)
+            .items.by_drive_item_id(f"root:/{encode_path(path)}:")
+            .create_upload_session.post(body)
+        )
+        if session is None or getattr(session, "upload_url", None) is None:
+            raise RuntimeError("createUploadSession returned no upload_url.")
+
+        stream = io.BytesIO(content)
+        task = LargeFileUploadTask(
+            upload_session=session,
+            request_adapter=self._graph_client.request_adapter,
+            stream=stream,
+            parsable_factory=DriveItem,
+            max_chunk_size=_CHUNK_SIZE,
+        )
+        result = await task.upload()
+        # LargeFileUploadTask.upload() returns the final DriveItem (or wraps it
+        # via UploadResult.item_response on newer kiota releases).
+        item = getattr(result, "item_response", result)
+        return _driveitem_to_dict(item)
+
+    # ----- get_link ---------------------------------------------------------
+    def get_link(self, item_id: str) -> str:
+        return asyncio.run(self._get_link_async(item_id))
+
+    async def _get_link_async(self, item_id: str) -> str:
+        from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+
+        drive_id = self.drive_id
+        try:
+            item = await (
+                self._graph_client.drives.by_drive_id(drive_id)
+                .items.by_drive_item_id(item_id)
+                .get()
+            )
+        except ODataError as exc:
+            if _odata_status_code(exc) == 404:
+                raise DocumentMissingError(item_id) from exc
+            raise
+        if item is None:
+            raise DocumentMissingError(item_id)
+        return item.web_url
+
+    # ----- delete -----------------------------------------------------------
+    def delete(self, item_id: str) -> None:
+        asyncio.run(self._delete_async(item_id))
+
+    async def _delete_async(self, item_id: str) -> None:
+        from msgraph.generated.models.o_data_errors.o_data_error import ODataError
+
+        drive_id = self.drive_id
+        try:
+            await (
+                self._graph_client.drives.by_drive_id(drive_id)
+                .items.by_drive_item_id(item_id)
+                .delete()
+            )
+        except ODataError as exc:
+            if _odata_status_code(exc) == 404:
+                raise DocumentMissingError(item_id) from exc
+            raise
+
+    # ----- list_folder ------------------------------------------------------
+    def list_folder(self, path: str) -> list[dict[str, Any]]:
+        return asyncio.run(self._list_folder_async(path))
+
+    async def _list_folder_async(self, path: str) -> list[dict[str, Any]]:
+        drive_id = self.drive_id
+        builder = (
+            self._graph_client.drives.by_drive_id(drive_id)
+            .items.by_drive_item_id(f"root:/{encode_path(path)}:")
+            .children
+        )
+        result = await builder.get()
+        out: list[dict[str, Any]] = []
+        while result is not None:
+            for child in result.value or []:
+                out.append(_driveitem_to_dict(child))
+            next_link = getattr(result, "odata_next_link", None)
+            if not next_link:
+                break
+            # Reuse the same builder to follow the @odata.nextLink page.
+            result = await builder.with_url(next_link).get()
+        return out
+
+
 _stub_singleton: StubGraphClient | None = None
 _stub_lock = threading.Lock()
 
@@ -371,9 +669,23 @@ def get_graph_client():
     return _build_real_client()
 
 
-def _build_real_client():
-    """Construct the live Graph client. Imports inside the function so the stub
-    path works on machines that don't have msgraph-sdk / azure-identity installed."""
+def _build_real_client() -> RealGraphClient:
+    """Construct the live Graph client wrapper.
+
+    Returns a ``RealGraphClient`` whose duck-typed methods (``ensure_folder``,
+    ``upload_bytes`` etc.) match ``StubGraphClient``. The module-level dispatch
+    functions therefore route to the live wrapper via ``hasattr`` without any
+    is-real branch.
+
+    Imports inside the function so the stub path works on machines that don't
+    have msgraph-sdk / azure-identity installed.
+
+    TODO (retry-hardener or follow-up): the spec recommends wiring
+    ``TokenCachePersistenceOptions`` so the DeviceCodeCredential refresh token
+    persists into the existing Fernet-encrypted ``_TokenStore`` blob. Without
+    this, every Streamlit reload triggers a fresh device-code dance. See
+    docs/specs/sharepoint_session_2c.md §6.3.
+    """
     try:
         from azure.identity import DeviceCodeCredential
         from msgraph import GraphServiceClient  # type: ignore[import-not-found]
@@ -388,7 +700,8 @@ def _build_real_client():
         tenant_id=MSGRAPH_TENANT_ID,
     )
     scopes = ["Sites.ReadWrite.All", "Files.ReadWrite.All", "offline_access"]
-    return GraphServiceClient(credentials=credential, scopes=scopes)
+    graph_client = GraphServiceClient(credentials=credential, scopes=scopes)
+    return RealGraphClient(_graph_client=graph_client)
 
 
 # ---------------------------------------------------------------------------
@@ -413,15 +726,14 @@ def ensure_project_folder(
 
 
 def _ensure_folder(client, path: str) -> str:
-    """Dispatch to client.ensure_folder when available (stub), otherwise build
-    a real Graph PATCH-or-create call. The real path is not implemented in
-    Session 2a — it raises NotImplementedError so the integration test catches
-    it the moment real creds get wired in."""
+    """Dispatch to the active client's ``ensure_folder``. Both ``StubGraphClient``
+    and ``RealGraphClient`` expose this method, so the only failure mode is a
+    truly broken client. The ``hasattr`` guard keeps the door open for future
+    alternate clients (in-tenant mocks, etc.)."""
     if hasattr(client, "ensure_folder"):
         return client.ensure_folder(path)
     raise NotImplementedError(
-        "Real Graph ensure_folder is wired in Session 2b. See PLATFORM_GOAL_v1.md "
-        "Phase 2 Session 2b for the createOrGet driveItem path."
+        f"Graph client {type(client).__name__} does not expose ensure_folder()."
     )
 
 
@@ -449,8 +761,7 @@ def upload_bytes(
     if hasattr(client, "upload_large"):
         return client.upload_large(path, content, content_type=content_type)
     raise NotImplementedError(
-        "Real Graph upload is wired in Session 2b. See PLATFORM_GOAL_v1.md "
-        "Phase 2 Session 2b for the small-upload and createUploadSession paths."
+        f"Graph client {type(client).__name__} does not expose upload_bytes/upload_large."
     )
 
 
@@ -458,7 +769,9 @@ def get_link(item_id: str, *, client=None) -> str:
     client = client or get_graph_client()
     if hasattr(client, "get_link"):
         return client.get_link(item_id)
-    raise NotImplementedError("Real Graph get_link wired in Session 2b.")
+    raise NotImplementedError(
+        f"Graph client {type(client).__name__} does not expose get_link()."
+    )
 
 
 def delete(item_id: str, *, client=None) -> None:
@@ -466,7 +779,9 @@ def delete(item_id: str, *, client=None) -> None:
     if hasattr(client, "delete"):
         client.delete(item_id)
         return
-    raise NotImplementedError("Real Graph delete wired in Session 2b.")
+    raise NotImplementedError(
+        f"Graph client {type(client).__name__} does not expose delete()."
+    )
 
 
 def list_folder(
@@ -480,7 +795,9 @@ def list_folder(
     path = project_folder_path(project_number, project_name, category)
     if hasattr(client, "list_folder"):
         return client.list_folder(path)
-    raise NotImplementedError("Real Graph list_folder wired in Session 2b.")
+    raise NotImplementedError(
+        f"Graph client {type(client).__name__} does not expose list_folder()."
+    )
 
 
 # ---------------------------------------------------------------------------

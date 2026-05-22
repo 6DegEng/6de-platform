@@ -162,3 +162,17 @@ SIXDE_PROJECTS_ROOT = os.environ.get(
     "SIXDE_PROJECTS_ROOT",
     "06_Engineering/01_ Active Projects",
 )
+
+# SharePoint site coordinates for Graph site/drive resolution.
+# Hostname + site path together identify the target site whose default document
+# library hosts the {SIXDE_PROJECTS_ROOT}/... tree. Defaults match the 6th
+# Degree Engineering tenant (Juan 2026-05-21, see
+# docs/specs/sharepoint_session_2c.md §11).
+SIXDE_GRAPH_HOSTNAME = os.environ.get(
+    "SIXDE_GRAPH_HOSTNAME",
+    "6thdegreeengineering.sharepoint.com",
+)
+SIXDE_GRAPH_SITE_PATH = os.environ.get(
+    "SIXDE_GRAPH_SITE_PATH",
+    "/sites/6thDegreeEngineering",
+)
