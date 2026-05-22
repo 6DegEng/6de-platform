@@ -396,15 +396,47 @@ def _odata_status_code(exc: Exception) -> int | None:
     return getattr(exc, "response_status_code", None)
 
 
+# Background event loop shared by every RealGraphClient call. msgraph-sdk's
+# httpx connection pool, the credential's token cache, and kiota's middleware
+# stack all bind themselves to whatever loop first touched them, so each
+# asyncio.run() (which creates and tears down a fresh loop) leaves the next
+# call with stale loop-bound resources — on Windows the visible symptom is
+# AttributeError: 'NoneType' object has no attribute 'send' from the proactor.
+# A single long-lived loop in a daemon thread avoids that.
+_graph_loop: asyncio.AbstractEventLoop | None = None
+_graph_loop_lock = threading.Lock()
+
+
+def _get_graph_loop() -> asyncio.AbstractEventLoop:
+    global _graph_loop
+    if _graph_loop is not None and not _graph_loop.is_closed():
+        return _graph_loop
+    with _graph_loop_lock:
+        if _graph_loop is None or _graph_loop.is_closed():
+            loop = asyncio.new_event_loop()
+            t = threading.Thread(target=loop.run_forever, name="graph-loop", daemon=True)
+            t.start()
+            _graph_loop = loop
+    return _graph_loop
+
+
+def _run_on_graph_loop(coro):
+    """Schedule ``coro`` on the persistent graph loop and block until done."""
+    fut = asyncio.run_coroutine_threadsafe(coro, _get_graph_loop())
+    return fut.result()
+
+
 @dataclass
 class RealGraphClient:
     """Live Microsoft Graph client wrapper. Duck-types ``StubGraphClient`` so
     the module-level dispatch (``hasattr(client, "upload_bytes")``) routes
     here when env vars are set.
 
-    Sync-over-async: msgraph-sdk is async-first; this wrapper calls
-    ``asyncio.run()`` per method so the existing sync call sites stay sync.
-    True async migration is a Phase 2 follow-up.
+    Sync-over-async: msgraph-sdk is async-first. We hand every coroutine off
+    to a single long-lived event loop running in a daemon thread (see
+    ``_get_graph_loop`` above). Earlier per-call ``asyncio.run()`` leaked
+    loop-bound httpx state between calls. True async migration is a Phase 2
+    follow-up.
     """
 
     _graph_client: Any
@@ -445,7 +477,7 @@ class RealGraphClient:
 
     # ----- ensure_folder ----------------------------------------------------
     def ensure_folder(self, path: str) -> str:
-        return asyncio.run(self._ensure_folder_async(path))
+        return _run_on_graph_loop(self._ensure_folder_async(path))
 
     async def _ensure_folder_async(self, path: str) -> str:
         from msgraph.generated.models.drive_item import DriveItem
@@ -505,7 +537,7 @@ class RealGraphClient:
     def upload_bytes(
         self, path: str, content: bytes, *, content_type: str | None = None
     ) -> dict[str, Any]:
-        return asyncio.run(self._upload_bytes_async(path, content, content_type=content_type))
+        return _run_on_graph_loop(self._upload_bytes_async(path, content, content_type=content_type))
 
     async def _upload_bytes_async(
         self, path: str, content: bytes, *, content_type: str | None = None
@@ -526,7 +558,7 @@ class RealGraphClient:
     def upload_large(
         self, path: str, content: bytes, *, content_type: str | None = None
     ) -> dict[str, Any]:
-        return asyncio.run(self._upload_large_async(path, content, content_type=content_type))
+        return _run_on_graph_loop(self._upload_large_async(path, content, content_type=content_type))
 
     async def _upload_large_async(
         self, path: str, content: bytes, *, content_type: str | None = None
@@ -575,7 +607,7 @@ class RealGraphClient:
 
     # ----- get_link ---------------------------------------------------------
     def get_link(self, item_id: str) -> str:
-        return asyncio.run(self._get_link_async(item_id))
+        return _run_on_graph_loop(self._get_link_async(item_id))
 
     async def _get_link_async(self, item_id: str) -> str:
         from msgraph.generated.models.o_data_errors.o_data_error import ODataError
@@ -597,7 +629,7 @@ class RealGraphClient:
 
     # ----- delete -----------------------------------------------------------
     def delete(self, item_id: str) -> None:
-        asyncio.run(self._delete_async(item_id))
+        _run_on_graph_loop(self._delete_async(item_id))
 
     async def _delete_async(self, item_id: str) -> None:
         from msgraph.generated.models.o_data_errors.o_data_error import ODataError
@@ -616,7 +648,7 @@ class RealGraphClient:
 
     # ----- list_folder ------------------------------------------------------
     def list_folder(self, path: str) -> list[dict[str, Any]]:
-        return asyncio.run(self._list_folder_async(path))
+        return _run_on_graph_loop(self._list_folder_async(path))
 
     async def _list_folder_async(self, path: str) -> list[dict[str, Any]]:
         drive_id = await self._ensure_drive_id()
