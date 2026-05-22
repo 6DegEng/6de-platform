@@ -701,7 +701,9 @@ def _build_real_client() -> RealGraphClient:
         client_id=MSGRAPH_CLIENT_ID,
         tenant_id=MSGRAPH_TENANT_ID,
     )
-    scopes = ["Sites.ReadWrite.All", "Files.ReadWrite.All", "offline_access"]
+    # Only resource scopes here — MSAL auto-includes openid/profile/offline_access
+    # and rejects explicit passes of those reserved values.
+    scopes = ["Sites.ReadWrite.All", "Files.ReadWrite.All"]
     graph_client = GraphServiceClient(credentials=credential, scopes=scopes)
     return RealGraphClient(_graph_client=graph_client)
 
