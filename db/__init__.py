@@ -261,6 +261,7 @@ def _expand_project_status_check(conn: sqlite3.Connection) -> None:
         check_values = ", ".join(f"'{s}'" for s in _EXPANDED_PROJECT_STATUSES)
 
         conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("PRAGMA legacy_alter_table=ON")
         conn.execute("BEGIN")
         try:
             col_defs = []
@@ -312,6 +313,7 @@ def _expand_project_status_check(conn: sqlite3.Connection) -> None:
             conn.execute("ROLLBACK")
             raise
         finally:
+            conn.execute("PRAGMA legacy_alter_table=OFF")
             conn.execute("PRAGMA foreign_keys=ON")
 
     conn.execute(

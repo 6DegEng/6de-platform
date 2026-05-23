@@ -464,6 +464,25 @@ CREATE TABLE IF NOT EXISTS project_updates (
 );
 
 -- ============================================================
+-- SAVED VIEWS (user-defined grid configurations)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS saved_views (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_user_id   TEXT    NOT NULL DEFAULT 'default',
+    name            TEXT    NOT NULL,
+    scope           TEXT    NOT NULL DEFAULT 'private'
+                    CHECK (scope IN ('private', 'shared')),
+    filters_json    TEXT,                               -- JSON: status, priority, etc.
+    columns_json    TEXT,                               -- JSON: visible columns + order
+    sort_json       TEXT,                               -- JSON: sort field + direction
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(owner_user_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_views_owner ON saved_views(owner_user_id);
+
+-- ============================================================
 -- INDEXES
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);

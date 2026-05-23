@@ -75,6 +75,14 @@ from modules.projects.workflow import (  # noqa: E402
     PRIORITY_LABELS,
     PRIORITY_VALUES,
 )
+from modules.views.crud import (  # noqa: E402
+    create_view,
+    delete_view,
+    get_view,
+    hydrate_view,
+    list_views,
+    update_view,
+)
 from streamlit_app.auth import require_auth  # noqa: E402
 from streamlit_app.components.activity_panel import render_activity_panel  # noqa: E402
 from streamlit_app.components.project_grid import render_project_grid  # noqa: E402
@@ -271,12 +279,110 @@ def render_filters() -> dict:
 
 render_filters()
 
+# ---------------------------------------------------------------------------
+# Saved views — load / save / manage
+# ---------------------------------------------------------------------------
+_VIEW_USER = "default"
+st.session_state.setdefault("ui:projects:active_view_id", None)
+
+_saved_views = list_views(conn, _VIEW_USER)
+_view_names = ["(unsaved)"] + [v["name"] for v in _saved_views]
+_view_ids: list[int | None] = [None] + [v["id"] for v in _saved_views]
+_active_vid = st.session_state["ui:projects:active_view_id"]
+_default_idx = _view_ids.index(_active_vid) if _active_vid in _view_ids else 0
+
+vcol1, vcol2, vcol3, vcol4 = st.columns([3, 1, 1, 1])
+with vcol1:
+    if _saved_views:
+        _sel_idx = st.selectbox(
+            "Saved view",
+            options=range(len(_view_names)),
+            format_func=lambda i: _view_names[i],
+            index=_default_idx,
+            key="ui:projects:view_selector",
+            label_visibility="collapsed",
+        )
+        _sel_vid = _view_ids[_sel_idx] if _sel_idx else None
+        if _sel_vid != st.session_state["ui:projects:active_view_id"]:
+            st.session_state["ui:projects:active_view_id"] = _sel_vid
+            if _sel_vid is not None:
+                _row = get_view(conn, _sel_vid)
+                if _row:
+                    _h = hydrate_view(_row)
+                    if _h.get("filters") and "status" in _h["filters"]:
+                        st.session_state["ui:projects:status_filter"] = _h["filters"]["status"]
+    else:
+        st.caption("No saved views yet — Save current to create your first.")
+
+with vcol2:
+    if st.button("Save current", key="ui:projects:save_view_btn", use_container_width=True):
+        st.session_state["ui:projects:show_save_dialog"] = True
+
+with vcol3:
+    _active_vid_now = st.session_state["ui:projects:active_view_id"]
+    _can_update = _active_vid_now is not None and any(
+        v["id"] == _active_vid_now and v["owner_user_id"] == _VIEW_USER
+        for v in _saved_views
+    )
+    if st.button(
+        "Update",
+        key="ui:projects:update_view_btn",
+        use_container_width=True,
+        disabled=not _can_update,
+        help="Overwrite the active view's filters with the current selection."
+            if _can_update else "Select a view you own to enable Update.",
+    ):
+        _filters = {"status": st.session_state.get("ui:projects:status_filter")}
+        update_view(conn, _active_vid_now, _VIEW_USER, filters=_filters)
+        st.rerun()
+
+with vcol4:
+    if st.button("Manage", key="ui:projects:manage_views_btn", use_container_width=True,
+                 disabled=not _saved_views):
+        st.session_state["ui:projects:show_manage"] = not st.session_state.get(
+            "ui:projects:show_manage", False
+        )
+
+if st.session_state.get("ui:projects:show_save_dialog"):
+    with st.expander("Save new view", expanded=True):
+        _new_name = st.text_input("View name", key="ui:projects:save_view_name_input")
+        _new_scope = st.radio("Scope", ["private", "shared"], horizontal=True,
+                              key="ui:projects:save_view_scope")
+        if st.button("Create", key="ui:projects:save_view_create"):
+            if _new_name:
+                _filters = {"status": st.session_state.get("ui:projects:status_filter")}
+                try:
+                    _new_id = create_view(
+                        conn, _VIEW_USER, _new_name, scope=_new_scope, filters=_filters,
+                    )
+                    st.session_state["ui:projects:active_view_id"] = _new_id
+                    st.session_state["ui:projects:show_save_dialog"] = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
+            else:
+                st.warning("Enter a view name.")
+
+if st.session_state.get("ui:projects:show_manage") and _saved_views:
+    with st.expander("Manage saved views", expanded=True):
+        for v in _saved_views:
+            mc1, mc2 = st.columns([4, 1])
+            with mc1:
+                scope_badge = "shared" if v["scope"] == "shared" else "private"
+                st.text(f"{v['name']} ({scope_badge})")
+            with mc2:
+                if v["owner_user_id"] == _VIEW_USER:
+                    if st.button("Delete", key=f"ui:projects:del_view_{v['id']}"):
+                        delete_view(conn, v["id"], _VIEW_USER)
+                        if st.session_state["ui:projects:active_view_id"] == v["id"]:
+                            st.session_state["ui:projects:active_view_id"] = None
+                        st.rerun()
+
+
 status_filter: Optional[str] = st.session_state["ui:projects:status_filter"]
 
 # ---------------------------------------------------------------------------
-# Fetch projects ONCE per render at the top of the page (was 6x — one per
-# status tab). Each view then filters this list in memory by the active
-# status filter.
+# Fetch projects ONCE per render at the top of the page.
 # ---------------------------------------------------------------------------
 if search_query.strip():
     all_projects = search_projects(conn, search_query.strip())
