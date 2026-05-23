@@ -158,9 +158,14 @@ def test_project_statuses_constant_matches_schema():
     contemporaneous update to the shared constant.
     """
     assert set(PROJECT_STATUSES) == {
-        "active",
         "prospect",
+        "active",
+        "drafting",
+        "ahj_permitting",
+        "inspection",
+        "revisions",
         "on_hold",
         "completed",
+        "cancelled",
         "archived",
     }

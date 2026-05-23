@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS projects (
     county          TEXT    DEFAULT 'Miami-Dade',
     state           TEXT    DEFAULT 'FL',
     status          TEXT    NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('prospect','active','on_hold','completed','archived')),
+                    CHECK (status IN (
+                        'prospect','active','drafting','ahj_permitting',
+                        'inspection','revisions','on_hold',
+                        'completed','cancelled','archived'
+                    )),
     scope           TEXT,                              -- brief description
     start_date      TEXT,
     target_end_date TEXT,
@@ -413,6 +417,53 @@ CREATE TABLE IF NOT EXISTS calc_project_links (
 );
 
 -- ============================================================
+-- PROJECT NOTES (long-form per-project notes)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS project_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    content     TEXT    NOT NULL,
+    author      TEXT    NOT NULL DEFAULT 'Juan',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- PROJECT CONTACTS (per-project stakeholder roster)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS project_contacts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name        TEXT    NOT NULL,
+    role        TEXT    NOT NULL DEFAULT 'other'
+                CHECK (role IN (
+                    'client','contractor','architect','inspector',
+                    'ahj','subcontractor','other'
+                )),
+    email       TEXT,
+    phone       TEXT,
+    company     TEXT,
+    notes       TEXT,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- PROJECT UPDATES (timestamped status feed)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS project_updates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    content     TEXT    NOT NULL,
+    category    TEXT    NOT NULL DEFAULT 'status'
+                CHECK (category IN (
+                    'status','permitting','client_communication',
+                    'internal_note','billing'
+                )),
+    author      TEXT    NOT NULL DEFAULT 'Juan',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
 -- INDEXES
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
@@ -440,6 +491,9 @@ CREATE INDEX IF NOT EXISTS idx_bids_status ON bid_opportunities(status);
 CREATE INDEX IF NOT EXISTS idx_po_project ON purchase_orders(project_id);
 CREATE INDEX IF NOT EXISTS idx_documents_entity ON documents(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_calc_links_erp ON calc_project_links(erp_project_id);
+CREATE INDEX IF NOT EXISTS idx_project_notes_project ON project_notes(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_contacts_project ON project_contacts(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_updates_project ON project_updates(project_id);
 
 -- ============================================================
 -- VIEWS

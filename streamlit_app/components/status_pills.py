@@ -22,23 +22,34 @@ from typing import Dict, Tuple
 # Mirrors the CHECK constraint at db/schema.sql:34-35.
 # ---------------------------------------------------------------------------
 PROJECT_STATUSES: Tuple[str, ...] = (
-    "active",
     "prospect",
+    "active",
+    "drafting",
+    "ahj_permitting",
+    "inspection",
+    "revisions",
     "on_hold",
     "completed",
+    "cancelled",
     "archived",
 )
 
 
 # ---------------------------------------------------------------------------
 # Color palette — adopted globally per the Session 3a UI uplift prompt.
+# Session 3b added 5 new statuses with distinct colors.
 # ---------------------------------------------------------------------------
 PROJECT_STATUS_COLORS: Dict[str, str] = {
-    "active":    "#1FBA66",
-    "prospect":  "#F7B500",
-    "on_hold":   "#A85FFF",
-    "completed": "#9CA3AF",
-    "archived":  "#374151",
+    "prospect":       "#F7B500",
+    "active":         "#1FBA66",
+    "drafting":       "#3B82F6",
+    "ahj_permitting": "#F59E0B",
+    "inspection":     "#06B6D4",
+    "revisions":      "#EF4444",
+    "on_hold":        "#A85FFF",
+    "completed":      "#9CA3AF",
+    "cancelled":      "#6B7280",
+    "archived":       "#374151",
 }
 
 
@@ -46,11 +57,16 @@ PROJECT_STATUS_COLORS: Dict[str, str] = {
 # Display labels — Title-cased with spaces for the underscore variants.
 # ---------------------------------------------------------------------------
 PROJECT_STATUS_LABELS: Dict[str, str] = {
-    "active":    "Active",
-    "prospect":  "Prospect",
-    "on_hold":   "On Hold",
-    "completed": "Completed",
-    "archived":  "Archived",
+    "prospect":       "Prospect",
+    "active":         "Active",
+    "drafting":       "Drafting",
+    "ahj_permitting": "AHJ/Permitting",
+    "inspection":     "Inspection",
+    "revisions":      "Revisions",
+    "on_hold":        "On Hold",
+    "completed":      "Completed",
+    "cancelled":      "Cancelled",
+    "archived":       "Archived",
 }
 
 
@@ -60,7 +76,7 @@ _FALLBACK_BG = "#6c757d"
 # Status values whose backgrounds are light enough that black text reads
 # better than white. The "completed" gray (#9CA3AF) and the "prospect"
 # amber (#F7B500) fall into this category; the rest stay white.
-_DARK_TEXT_STATUSES = frozenset({"completed", "prospect"})
+_DARK_TEXT_STATUSES = frozenset({"completed", "prospect", "ahj_permitting", "cancelled"})
 
 
 def render_status_pill(status: str) -> str:

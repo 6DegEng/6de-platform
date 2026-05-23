@@ -215,12 +215,119 @@ def _apply_alter_columns(conn: sqlite3.Connection) -> None:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Session 3b — expand projects.status CHECK constraint from 5 to 10 values.
+# SQLite cannot ALTER a CHECK constraint, so we rebuild the table.
+# ---------------------------------------------------------------------------
+_EXPANDED_PROJECT_STATUSES = (
+    "prospect", "active", "drafting", "ahj_permitting",
+    "inspection", "revisions", "on_hold",
+    "completed", "cancelled", "archived",
+)
+
+
+def _expand_project_status_check(conn: sqlite3.Connection) -> None:
+    """Expand the projects.status CHECK constraint from 5 to 10 values.
+
+    Only runs once — gated on ``_meta.key='projects_status_expanded'``.
+
+    Strategy: try inserting a row with one of the new status values. If
+    it succeeds, the CHECK already allows it (fresh install from updated
+    schema.sql). If it fails with a CHECK violation, rebuild the table
+    using the SQLite rename pattern.
+    """
+    _ensure_meta_table(conn)
+    row = conn.execute(
+        "SELECT value FROM _meta WHERE key = 'projects_status_expanded'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    # Check if the table already has the expanded CHECK by inspecting
+    # the CREATE TABLE SQL in sqlite_master. No-op probe that avoids
+    # consuming auto-increment IDs.
+    create_sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'"
+    ).fetchone()
+    needs_rebuild = (
+        create_sql_row is not None
+        and "'drafting'" not in (create_sql_row["sql"] or "")
+    )
+
+    if needs_rebuild:
+        cols_info = conn.execute("PRAGMA table_info(projects)").fetchall()
+        col_names = [c["name"] for c in cols_info]
+        col_list = ", ".join(col_names)
+        check_values = ", ".join(f"'{s}'" for s in _EXPANDED_PROJECT_STATUSES)
+
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("BEGIN")
+        try:
+            col_defs = []
+            for c in cols_info:
+                name = c["name"]
+                ctype = c["type"] or "TEXT"
+                parts = [name, ctype]
+                if name == "id":
+                    parts.append("PRIMARY KEY AUTOINCREMENT")
+                elif c["notnull"] and name != "id":
+                    parts.append("NOT NULL")
+                if name == "status":
+                    parts.append(
+                        f"DEFAULT 'active' "
+                        f"CHECK (status IN ({check_values}))"
+                    )
+                elif c["dflt_value"] is not None:
+                    dflt = c["dflt_value"]
+                    # Wrap expression defaults in parens (PRAGMA strips them)
+                    if "(" in str(dflt):
+                        parts.append(f"DEFAULT ({dflt})")
+                    else:
+                        parts.append(f"DEFAULT {dflt}")
+                col_defs.append(" ".join(parts))
+
+            create_sql = (
+                "CREATE TABLE projects_new (\n"
+                + ",\n".join(f"    {d}" for d in col_defs)
+                + ",\n    FOREIGN KEY (client_id) REFERENCES clients(id)"
+                + "\n)"
+            )
+            conn.execute(create_sql)
+            conn.execute(
+                f"INSERT INTO projects_new ({col_list}) "
+                f"SELECT {col_list} FROM projects"
+            )
+            conn.execute("DROP TABLE projects")
+            conn.execute("ALTER TABLE projects_new RENAME TO projects")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_projects_status "
+                "ON projects(status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_projects_job "
+                "ON projects(job_number)"
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON")
+
+    conn.execute(
+        "INSERT INTO _meta (key, value) "
+        "VALUES ('projects_status_expanded', '1') "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+
+
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Apply the schema.sql DDL + the ALTER COLUMN list. Called only when
     the stored fingerprint doesn't match the current code state."""
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     _ensure_meta_table(conn)
     _apply_alter_columns(conn)
+    _expand_project_status_check(conn)
     _store_fingerprint(conn, _current_schema_fingerprint())
 
 
