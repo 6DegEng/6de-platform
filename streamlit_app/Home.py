@@ -126,6 +126,25 @@ with st.sidebar:
         "Use the navigation above to switch views."
     )
     st.divider()
+    st.markdown("**SharePoint mirror**")
+    if st.button("Regenerate snapshots", key="ui:home:regen_mirrors",
+                 use_container_width=True,
+                 help="Render all _AUTO_*.md and _AUTO_portfolio_overview.xlsx, "
+                      "uploading only files that changed."):
+        from modules.mirror.sync import sync_all
+        with st.spinner("Syncing snapshots…"):
+            _result = sync_all(ensure_db())
+        _counts = _result["project_counts"]
+        st.success(
+            f"Synced {_result['total_projects']} projects + 1 portfolio.  "
+            f"Uploaded: {_counts.get('uploaded', 0) + _counts.get('local', 0)} · "
+            f"Unchanged: {_counts.get('unchanged', 0)} · "
+            f"Errors: {len(_result['errors'])}"
+        )
+        if _result["errors"]:
+            with st.expander("Error details"):
+                st.json(_result["errors"])
+    st.divider()
     st.markdown(
         "<small style='color:#6c757d;'>Juan C. Castillo, P.E.&ensp;|&ensp;"
         "FL PE #98059</small>",
