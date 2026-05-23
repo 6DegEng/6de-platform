@@ -47,15 +47,7 @@ from db import get_connection, init_db  # noqa: E402
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def projects_page(tmp_path, monkeypatch):
-    """Mount /Projects with auth disabled and a seeded DB.
-
-    Note: ``PLATFORM_DB_PATH`` is read at ``config`` import time. If
-    ``config`` already loaded in this test session, the env override is
-    too late and the page will render against whatever DB it was first
-    bound to. That latent issue is filed under "Deferred TODOs" in the
-    verification doc — these smokes still pass against the production
-    DB because they only check that view-switching does not raise.
-    """
+    """Mount /Projects with auth disabled and a seeded DB."""
     from streamlit.testing.v1 import AppTest
 
     db_path = tmp_path / "platform_test.db"
@@ -80,6 +72,11 @@ def projects_page(tmp_path, monkeypatch):
     conn.close()
 
     monkeypatch.setenv("PLATFORM_DB_PATH", str(db_path))
+    monkeypatch.setattr("db.DB_PATH", db_path)
+    monkeypatch.setattr("config.DB_PATH", db_path)
+    import db as _db_mod
+    if hasattr(_db_mod.ensure_db, "clear"):
+        _db_mod.ensure_db.clear()
     monkeypatch.setattr("streamlit_app.auth.require_auth", lambda: None)
 
     at = AppTest.from_file(

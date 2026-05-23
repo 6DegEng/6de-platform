@@ -103,6 +103,11 @@ def app_test(tmp_path, monkeypatch):
     conn.close()
 
     monkeypatch.setenv("PLATFORM_DB_PATH", str(db_path))
+    monkeypatch.setattr("db.DB_PATH", db_path)
+    monkeypatch.setattr("config.DB_PATH", db_path)
+    import db as _db_mod
+    if hasattr(_db_mod.ensure_db, "clear"):
+        _db_mod.ensure_db.clear()
     # Bypass auth — the test isn't about login.
     monkeypatch.setattr("streamlit_app.auth.require_auth", lambda: None)
 
