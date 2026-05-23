@@ -119,7 +119,7 @@ require_auth()
 with st.sidebar:
     show_logout_button()
     st.markdown("# 6th Degree Engineering")
-    st.caption("ERP Platform v3.3")
+    st.caption("ERP Platform v3.4")
     st.divider()
     st.markdown(
         "Pages load automatically from the **pages/** folder.  "

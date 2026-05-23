@@ -8,7 +8,7 @@
 
 ## Commits in this session
 
-Eight commits, oldest-first:
+Ten commits, oldest-first:
 
 - `578bdc5` chore(deps): add UI uplift dependencies
 - `bddb561` chore(deps): drop streamlit-elements (RED-health, no confirmed use)
@@ -18,10 +18,8 @@ Eight commits, oldest-first:
 - `2cd7b3e` feat(projects): kanban view
 - `afcf699` feat(projects): timeline view
 - `4fe2bc2` feat(projects): per-project activity panel
-
-A ninth commit (`docs(qa): Session 3a verification + e2e smoke tests`)
-ships this report and the new AppTest smoke file
-`tests/test_3a_e2e_smoke.py`.
+- `2b81d70` docs(qa): Session 3a verification + e2e smoke tests (this report)
+- `af891a9` feat(projects): calendar view via streamlit-calendar — **shipped post-Gate 4 per Juan's call to spin up subagent 5b before merging**
 
 ---
 
@@ -130,18 +128,14 @@ Visual smoke breakdown:
 
 ## Deferred TODOs
 
-1. **Calendar view — `streamlit-calendar` integration.** The current
-   Calendar view (`render_calendar_view` in `1_Projects.py:1186-1208`)
-   is a clean placeholder: `st.info("Calendar view — coming up next.")`
-   plus a metric counting target_end_dates falling in the current
-   calendar month. The placeholder renders without crashing and surfaces
-   useful information. The full `streamlit-calendar` integration
-   (month grid, events colored by status, drill-down to project) is
-   estimated at ~30 minutes including a regression test. **Decision:**
-   I did NOT ship the upgrade in this session — the goal contract said
-   "may ship as preview," and four other views need Gate 4 eyeballing
-   before adding a fifth. **File for Session 3a.1 or fold into 3b's
-   info-capture work.**
+1. **Calendar view — ~~`streamlit-calendar` integration~~ SHIPPED in `af891a9`.**
+   At Gate 4 Juan opted to spin up subagent 5b for a real `streamlit-calendar`
+   integration before the merge. Each project surfaces as a target_close
+   event (colored by status) with an optional start_date event when
+   start_date differs from target_close. `eventClick` callback sets
+   `ui:projects:focus` and the detail panel renders below. Honors the
+   status segmented control + new "Show archived" checkbox. ~18 minutes
+   spent against the 30-minute budget. Read-only; no DB writes.
 
 2. **Real cross-column Kanban drag-and-drop.** The scout's recommended
    `streamlit-sortables` library only accepts `list[str]` items, which

@@ -1,5 +1,80 @@
 # Changelog
 
+## Session 3a — Projects page UI uplift — 2026-05-23
+
+The Projects page goes from a single vertical-expander list to a Monday-style 4-view board: Table / Kanban / Timeline / Calendar. Pilot module — the same pattern is planned for CRM, Bids, and Permits in later sessions.
+
+### Architecture changes
+- **Project fetch collapsed from 6× per rerun to 1×.** Old structure ran `list_projects()` inside each of 6 status tabs every rerun; new structure fetches once at the top of the page and filters in memory per view.
+- **`ui:projects:*` session_state namespace** for persistent UI state across reruns: `view`, `focus`, `status_filter`, `expanded`, `_test_visible_ids`. Browser-reload (localStorage) deliberately out of scope.
+- **New shared component:** `streamlit_app/components/status_pills.py` — single source of truth for `PROJECT_STATUSES`, `PROJECT_STATUS_COLORS`, `PROJECT_STATUS_LABELS`, and `render_status_pill(status)`. Page-local `_STATUS_COLORS` / `_STATUS_ICONS` dicts removed.
+- **Color palette aligned to the prompt's hex codes globally:** `#1FBA66` active, `#F7B500` prospect, `#A85FFF` on_hold, `#9CA3AF` completed, `#374151` archived. Replaces the previous `formatters.py` palette across all consumers (not just Projects page).
+
+### Table view (`f248467`)
+- streamlit-aggrid grid, 520px tall, floating filter row, every column sortable.
+- 9 editable columns: name, status (dropdown), address, city, county, scope, start_date (date editor), target_end_date (date editor), notes. job_number and client_name read-only.
+- Status changes validated against `PROJECT_STATUSES` pre-DB; all saves flow through `modules/projects/crud.py:update_project()` which writes `activity_log` via the standard pattern.
+- Status cell renders as a colored HTML pill via JsCode cellRenderer.
+- Row deletion disabled (guardrail); mass-paste row creation disabled.
+- Click a row → sets `ui:projects:focus = pid`; the detail panel below renders with the full 6-tab project view (`← Close` button keyed `t0_p{pid}` to dismiss).
+- New module: `streamlit_app/components/project_grid.py` (`render_project_grid`, `handle_row_save`, `diff_row`, `projects_to_dataframe`, column-config tuples).
+
+### Kanban view (`2cd7b3e`)
+- One column per status (5 with "Show archived" toggle on, 4 with off — default). Cards show job_number, name (truncated to 40), client, target close.
+- Per-card `st.selectbox` for status changes. Routes through `update_project()`.
+- **DnD fallback explanation:** `streamlit-sortables 0.3.1` only accepts `list[str]` items; cannot render the rich card layout. Real cross-column DnD would need a custom Streamlit component (~1 day; filed as deferred TODO).
+- Card styling: 4px colored left border in the status color, light gray background, padding 8px 12px, border-radius 4px.
+
+### Timeline view (`afcf699`)
+- Plotly Gantt-style; bars colored by status, sorted by `start_date` ascending.
+- NULL handling: both NULL → omitted with footer count; only target → 1-day point at target; only start → open-ended bar from start_date to today.
+- Today marker via red dashed `add_shape` vertical line.
+- Click-to-open fallback: below-chart selectbox with `None` sentinel (Plotly events under Streamlit are unreliable).
+- Added `plotly>=5.0,<7` to requirements.txt.
+
+### Calendar view (`af891a9`, post-Gate 4)
+- Real `streamlit-calendar` 1.4.0 FullCalendar integration.
+- Each project surfaces as a `target_close` event (colored by status) + optional `start_date` event (▶-prefixed title) when start ≠ target.
+- `eventClick` callback returns `extendedProps.project_id` → flips `ui:projects:focus`.
+- Honors status segmented control + new "Show archived" checkbox.
+- Header toolbar: prev/next/today, month/week/list views.
+
+### Activity panel (`4fe2bc2`)
+- 6th tab "Activity" on every project's detail view.
+- New module: `modules/projects/activity.py` — `list_project_activity`, `count_project_activity`, `summarize_activity`. Milestone events folded in by default (toggleable) via `entity_id IN (SELECT id FROM milestones WHERE project_id=?)` — milestone-update payloads don't carry `project_id` so the JSON-extract subquery would miss them.
+- Per scout §3: there is **no** `status_change` action — status changes are bundled into `action='updated'` with `"status"` in details. `summarize_activity()` recognizes that pattern explicitly.
+- 25-row pagination. Details expander only appears for payloads with >3 keys (avoids noise on routine status changes).
+- New module: `streamlit_app/components/activity_panel.py` (`render_activity_panel`).
+
+### Dependencies (`578bdc5`, `bddb561`, `afcf699`)
+- Added: `streamlit-aggrid>=1.2,<2`, `streamlit-sortables>=0.3,<1`, `streamlit-calendar>=1.4,<2`, `plotly>=5.0,<7`.
+- Dropped: `streamlit-elements` — Gate 2 health-check found it RED (~32 months stale at v0.1.0). View-switcher uses `st.radio(horizontal=True)` per scout §9; no other downstream usage emerged.
+- Side effect of `pip install -r requirements.txt`: env was drifted out-of-band, so `pandas 3.0.2 → 2.3.3` and `cryptography 48.0.0 → 45.0.7` got pulled back to the pins. No test regressions.
+
+### Tests (`f2f1dbe`, `f248467`, `2cd7b3e`, `4fe2bc2`, `2b81d70`)
+- Baseline: 110/110 pre-session → **134/134 post-session** (+24 net new).
+- 4 required service-layer tests in `tests/test_projects_inline_edit.py` (routes-through-update_project, rejects-invalid-status, emits-activity_log, no-change-is-noop) + 3 `diff_row` unit tests.
+- 4 Kanban tests in `tests/test_projects_kanban.py` (status-change-routes-through, show-archived-filter, rejects-invalid-status, statuses-match-schema).
+- 7 activity tests in `tests/test_projects_activity.py` (returns-project-rows, paginates, milestone-flag, count-matches-list, status-change-summary, null-details-handled, milestone-completed-summary).
+- 6 AppTest e2e smokes in `tests/test_3a_e2e_smoke.py` (view-switch-default, switch-to-kanban, switch-to-timeline, switch-to-calendar, detail-panel-6-tabs, view-persists-across-rerun).
+- 3 expander-DOM tests in `tests/test_projects_search.py` rewritten to read `st.session_state["ui:projects:_test_visible_ids"]` (Gate 1 decision); structural Phase B test and 4 CRUD-layer tests untouched.
+
+### Process notes
+- **7-subagent sequential pipeline** with 4 gates (scout findings, dep-health, Table-view demo, final handoff). Gates worked — Gate 2 caught the streamlit-elements stale-dep and produced a no-impact drop; Gate 3 demo confirmed Table view before Kanban/Timeline shipped; Gate 4 produced the Calendar follow-up.
+- Scout report at `docs/specs/3a_scout.md` (639 lines) was load-bearing — every subagent referenced it for service-layer surfaces, status enum source-of-truth, st.rerun risks, and palette decisions.
+- Verification report at `docs/qa/session_3a_verification.md`.
+
+### Deferred
+- Real cross-column Kanban DnD (custom React component, ~1 day) — selectbox fallback works.
+- Plotly bar-click-to-open — Plotly events under Streamlit are unreliable; below-chart selectbox is the workaround.
+- Latent AppTest fixture bug: `PLATFORM_DB_PATH` env var read at import time defeats `monkeypatch.setenv` — AppTest tests effectively run against the live DB. Not 3a's bug.
+- `datetime.utcnow()` deprecation in `modules/projects/crud.py:21` (31 warnings) — pre-existing; one-line fix on next CRUD touch.
+
+### Version
+- Bumped to v3.4 in `streamlit_app/Home.py`.
+
+---
+
 ## Phase 2 — SharePoint Document Layer — 2026-05-22
 
 Three back-to-back sessions stand up the SharePoint-as-document-store contract from `PLATFORM_GOAL_v1.md` Phase 2. Foundation → offline scaffolding + UI → live wire-up. The platform now writes generated PDFs to a real SharePoint document library via Microsoft Graph; the Documents tab on each project renders SharePoint URLs (or OneDrive paths for backfilled rows) and degrades gracefully when the Entra ID app reg is missing.
