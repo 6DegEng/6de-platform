@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 
@@ -21,7 +21,7 @@ from typing import Any
 
 def _now() -> str:
     """Return current UTC timestamp in ISO-8601 format."""
-    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _generate_job_number(conn: sqlite3.Connection) -> str:
