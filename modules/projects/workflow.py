@@ -16,21 +16,12 @@ from datetime import date, datetime
 from streamlit_app.components.status_pills import PROJECT_STATUSES
 
 
+from modules.status_colors import (
+    PRIORITY_COLORS as PRIORITY_COLORS,
+    PRIORITY_LABELS as PRIORITY_LABELS,
+)
+
 PRIORITY_VALUES = ("low", "normal", "high", "urgent")
-
-PRIORITY_LABELS = {
-    "low": "Low",
-    "normal": "Normal",
-    "high": "High",
-    "urgent": "Urgent",
-}
-
-PRIORITY_COLORS = {
-    "low": "#22C55E",
-    "normal": "#6B7280",
-    "high": "#F59E0B",
-    "urgent": "#EF4444",
-}
 
 # TODO: When a project transitions to a terminal status (completed, cancelled,
 # archived), also set its lifecycle_bucket — wire when bucket column lands.

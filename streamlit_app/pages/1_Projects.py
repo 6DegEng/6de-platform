@@ -346,12 +346,9 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
             except (KeyError, IndexError):
                 priority = None
             if priority:
-                pri_color = PRIORITY_COLORS.get(priority, "#6B7280")
-                pri_label = PRIORITY_LABELS.get(priority, priority)
+                from modules.status_colors import priority_pill_html
                 st.markdown(
-                    f"**Priority:** <span style='background:{pri_color};color:#fff;"
-                    f"padding:2px 10px;border-radius:10px;font-size:0.85em;"
-                    f"font-weight:600;'>{pri_label}</span>",
+                    f"**Priority:** {priority_pill_html(priority)}",
                     unsafe_allow_html=True,
                 )
             else:
