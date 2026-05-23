@@ -14,6 +14,5 @@ python-dotenv>=1.0,<2
 
 # Session 3a — Projects page UI uplift (Table / Kanban / Timeline / Calendar)
 streamlit-aggrid>=1.2,<2
-streamlit-elements>=0.1,<1
 streamlit-sortables>=0.3,<1
 streamlit-calendar>=1.4,<2

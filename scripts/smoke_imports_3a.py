@@ -6,7 +6,6 @@ Must print "OK" on stdout. Any ImportError fails the gate.
 
 import streamlit  # noqa: F401
 import st_aggrid  # noqa: F401  (PyPI: streamlit-aggrid)
-import streamlit_elements  # noqa: F401  (PyPI: streamlit-elements)
 import streamlit_sortables  # noqa: F401  (PyPI: streamlit-sortables — kanban DnD)
 import streamlit_calendar  # noqa: F401  (PyPI: streamlit-calendar)
 
