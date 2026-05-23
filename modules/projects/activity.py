@@ -54,13 +54,13 @@ def list_project_activity(
     parse the details JSON (milestone-update payloads do not carry
     ``project_id``).
 
+    Session 3b also surfaces ``user_update`` actions (project_updates
+    inserts that emit activity_log rows). These are ``entity_type=
+    'project'`` so they're included automatically.
+
     Ordering: ``created_at DESC, id DESC`` — the id tiebreak handles
     same-second writes (project-create + milestone-create executed in
     the same call would otherwise sort unstably).
-
-    Returns ``list[sqlite3.Row]`` so the renderer can access
-    ``row["created_at"]``, ``row["entity_type"]``, ``row["entity_id"]``,
-    ``row["action"]``, ``row["details"]`` by name.
     """
     if include_milestones:
         sql = (
@@ -136,9 +136,18 @@ def _project_summary(action: str, details: dict) -> str:
             return f"Project created: {name}"
         return "Project created"
 
+    if action == "status_changed":
+        from_val = details.get("from", "?")
+        to_val = details.get("to", "?")
+        to_label = PROJECT_STATUS_LABELS.get(
+            to_val, str(to_val).replace("_", " ").title()
+        )
+        from_label = PROJECT_STATUS_LABELS.get(
+            from_val, str(from_val).replace("_", " ").title()
+        )
+        return f"Status: {from_label} → {to_label}"
+
     if action == "updated":
-        # Filter out the auto-added updated_at key so it doesn't
-        # masquerade as a "changed field".
         meaningful = {k: v for k, v in details.items() if k != "updated_at"}
         if "status" in meaningful:
             status_val = meaningful["status"]
@@ -155,8 +164,37 @@ def _project_summary(action: str, details: dict) -> str:
     if action == "deleted":
         return "Project deleted"
 
-    # Defensive fallback.
-    return f"{action.title()} Project"
+    if action == "user_update":
+        category = details.get("category", "status")
+        _cat_labels = {
+            "status": "Status update",
+            "permitting": "Permitting update",
+            "client_communication": "Client communication",
+            "internal_note": "Internal note",
+            "billing": "Billing update",
+        }
+        return _cat_labels.get(category, "Update added")
+
+    if action == "note_added":
+        return "Note added"
+
+    if action == "note_deleted":
+        return "Note removed"
+
+    if action == "contact_added":
+        name = details.get("name", "")
+        role = details.get("role", "")
+        if name and role:
+            return f"Contact added: {name} ({role})"
+        return "Contact added"
+
+    if action == "contact_removed":
+        return "Contact removed"
+
+    if action == "update_deleted":
+        return "Update removed"
+
+    return f"{action.replace('_', ' ').title()}"
 
 
 def _milestone_summary(action: str, details: dict) -> str:

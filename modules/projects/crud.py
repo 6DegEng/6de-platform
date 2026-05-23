@@ -125,12 +125,46 @@ def create_project(conn: sqlite3.Connection, **kwargs: Any) -> int:
     return project_id
 
 
-def update_project(conn: sqlite3.Connection, project_id: int, **kwargs: Any) -> None:
+def update_project(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    unarchive: bool = False,
+    **kwargs: Any,
+) -> None:
     """Update fields on an existing project.
 
     Automatically sets ``updated_at`` to now and logs the change to
-    ``activity_log``.
+    ``activity_log``. Status changes are validated against the workflow
+    and emit a dedicated ``status_changed`` activity row.
     """
+    from modules.projects.workflow import (
+        InvalidStatusTransition,
+        clamp_percent_complete,
+        validate_priority,
+        validate_status_transition,
+    )
+
+    if "status" in kwargs:
+        old_row = conn.execute(
+            "SELECT status FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        if old_row:
+            old_status = old_row["status"]
+            new_status = kwargs["status"]
+            if old_status != new_status:
+                validate_status_transition(
+                    old_status, new_status, unarchive=unarchive
+                )
+
+    if "priority" in kwargs and kwargs["priority"] is not None:
+        validate_priority(kwargs["priority"])
+
+    if "percent_complete" in kwargs and kwargs["percent_complete"] is not None:
+        kwargs["percent_complete"] = clamp_percent_complete(
+            kwargs["percent_complete"]
+        )
+
     kwargs["updated_at"] = _now()
     set_clause = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [project_id]
@@ -139,7 +173,14 @@ def update_project(conn: sqlite3.Connection, project_id: int, **kwargs: Any) -> 
         values,
     )
     conn.commit()
-    _log_activity(conn, "project", project_id, "updated", kwargs)
+
+    if "status" in kwargs and old_row and old_row["status"] != kwargs["status"]:
+        _log_activity(
+            conn, "project", project_id, "status_changed",
+            {"from": old_row["status"], "to": kwargs["status"]},
+        )
+    else:
+        _log_activity(conn, "project", project_id, "updated", kwargs)
     conn.commit()
 
 

@@ -72,7 +72,7 @@ def test_kanban_status_change_routes_through_update_project(db):
     pid = _seed_project(db, status="active")
     before = db.execute(
         "SELECT COUNT(*) FROM activity_log "
-        "WHERE entity_type='project' AND entity_id=? AND action='updated'",
+        "WHERE entity_type='project' AND entity_id=? AND action='status_changed'",
         (pid,),
     ).fetchone()[0]
 
@@ -85,25 +85,26 @@ def test_kanban_status_change_routes_through_update_project(db):
     ).fetchone()[0]
     assert new_status == "on_hold"
 
-    # Exactly one new 'updated' log row.
+    # Exactly one new 'status_changed' log row.
     after = db.execute(
         "SELECT COUNT(*) FROM activity_log "
-        "WHERE entity_type='project' AND entity_id=? AND action='updated'",
+        "WHERE entity_type='project' AND entity_id=? AND action='status_changed'",
         (pid,),
     ).fetchone()[0]
     assert after == before + 1, (
-        f"expected one new updated row, got {after - before}"
+        f"expected one new status_changed row, got {after - before}"
     )
 
-    # The latest log row's details include the status key.
+    # The latest log row's details include from/to.
     latest = db.execute(
         "SELECT details FROM activity_log "
-        "WHERE entity_type='project' AND entity_id=? AND action='updated' "
+        "WHERE entity_type='project' AND entity_id=? AND action='status_changed' "
         "ORDER BY id DESC LIMIT 1",
         (pid,),
     ).fetchone()[0]
     parsed = json.loads(latest)
-    assert parsed.get("status") == "on_hold"
+    assert parsed.get("from") == "active"
+    assert parsed.get("to") == "on_hold"
 
 
 def test_kanban_show_archived_filter_affects_visible_ids(db):
@@ -137,10 +138,10 @@ def test_kanban_status_change_rejects_invalid_status(db):
     via SQLite's CHECK constraint. This is the same safety net the
     inline-edit handler relies on.
     """
-    import sqlite3
+    from modules.projects.workflow import InvalidStatusTransition
 
     pid = _seed_project(db, status="active")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(InvalidStatusTransition):
         update_project(db, pid, status="frobnicated")
 
     # The row's status MUST be unchanged after the failed write.
