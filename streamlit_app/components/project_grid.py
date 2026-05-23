@@ -1,20 +1,8 @@
 """streamlit-aggrid Table view for the Projects page.
 
-Session 3a — subagent 4. Replaces the per-project ``st.expander`` list with
-an inline-editable AgGrid. Status pills are rendered as colored cells via a
-JsCode cellRenderer that mirrors the palette in
-``streamlit_app/components/status_pills.py``.
-
-Save semantics
---------------
-On any cell edit, the grid returns the full updated row in ``data``. The
-page-level handler diffs the new row against the original and routes any
-changed fields through ``modules/projects/crud.py:update_project``. This
-keeps the activity log writes consistent with the rest of the platform.
-
-NO ``st.rerun()`` is called from the save handler (scout report §8 risk #3
-— a forced rerun discards in-flight cell edits). The grid handles its own
-visual refresh; we surface a ``st.toast`` for user feedback only.
+Inline-editable AgGrid with status/priority pill renderers, bulk actions,
+density toggle, and lifecycle bucket grouping. All writes route through
+``modules/projects/crud.py:update_project`` for activity log consistency.
 """
 
 from __future__ import annotations
@@ -32,6 +20,7 @@ from modules.projects.workflow import (
     PRIORITY_LABELS,
     PRIORITY_VALUES,
 )
+from modules.status_colors import STATUS_TO_BUCKET
 from streamlit_app.components.status_pills import (
     PROJECT_STATUS_COLORS,
     PROJECT_STATUS_LABELS,
@@ -70,6 +59,7 @@ GRID_COLUMN_ORDER: tuple[str, ...] = (
     "job_number",
     "name",
     "status",
+    "lifecycle_bucket",
     "priority",
     "percent_complete",
     "client_name",
@@ -82,6 +72,7 @@ GRID_COLUMN_ORDER: tuple[str, ...] = (
     "contract_value",
     "start_date",
     "target_end_date",
+    "updated_at",
     "notes",
 )
 
@@ -90,6 +81,7 @@ COLUMN_HEADERS: dict[str, str] = {
     "job_number": "Job #",
     "name": "Project",
     "status": "Status",
+    "lifecycle_bucket": "Bucket",
     "priority": "Priority",
     "percent_complete": "% Complete",
     "client_name": "Client",
@@ -102,7 +94,14 @@ COLUMN_HEADERS: dict[str, str] = {
     "contract_value": "Contract $",
     "start_date": "Start",
     "target_end_date": "Target Close",
+    "updated_at": "Updated",
     "notes": "Notes",
+}
+
+DENSITY_OPTIONS: dict[str, int] = {
+    "Compact": 28,
+    "Default": 36,
+    "Comfortable": 48,
 }
 
 
@@ -183,19 +182,27 @@ def _build_percent_renderer() -> JsCode:
 # stable column order matching GRID_COLUMN_ORDER.
 # ---------------------------------------------------------------------------
 _NUMERIC_COLUMNS = {"percent_complete", "contract_value"}
+_COMPUTED_COLUMNS = {"lifecycle_bucket"}
 
 
 def projects_to_dataframe(projects: Sequence[Mapping[str, Any]]) -> pd.DataFrame:
     """Convert a sequence of sqlite3.Row-like rows into the grid DataFrame.
 
-    Only the columns this grid surfaces survive — others are dropped.
-    Missing text values become empty strings (aggrid renders ``None`` as the
-    literal "None" otherwise). Numeric columns keep their native type.
+    Computes ``lifecycle_bucket`` from ``status`` via STATUS_TO_BUCKET.
+    Missing text values become empty strings; numeric columns keep native type.
     """
     rows: list[dict[str, Any]] = []
     for p in projects:
         row: dict[str, Any] = {}
         for col in GRID_COLUMN_ORDER:
+            if col == "lifecycle_bucket":
+                status = ""
+                try:
+                    status = p["status"] or ""
+                except (KeyError, IndexError):
+                    pass
+                row[col] = STATUS_TO_BUCKET.get(status, "")
+                continue
             try:
                 val = p[col]
             except (KeyError, IndexError):
@@ -307,10 +314,63 @@ def handle_row_save(
 # ---------------------------------------------------------------------------
 # Grid options builder
 # ---------------------------------------------------------------------------
-def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
+def _build_relative_time_formatter() -> JsCode:
+    return JsCode(
+        """function(params) {
+            if (!params.value) return '';
+            try {
+                const dt = new Date(params.value);
+                const now = new Date();
+                const secs = Math.floor((now - dt) / 1000);
+                if (secs < 60) return 'just now';
+                const mins = Math.floor(secs / 60);
+                if (mins < 60) return mins + 'm ago';
+                const hrs = Math.floor(mins / 60);
+                if (hrs < 24) return hrs + 'h ago';
+                const days = Math.floor(hrs / 24);
+                if (days < 7) return days + 'd ago';
+                if (days < 30) return Math.floor(days / 7) + 'w ago';
+                if (days < 365) return Math.floor(days / 30) + 'mo ago';
+                return Math.floor(days / 365) + 'y ago';
+            } catch (e) { return params.value; }
+        }"""
+    )
+
+
+def _build_bucket_renderer() -> JsCode:
+    from modules.status_colors import LIFECYCLE_BUCKET_COLORS, LIFECYCLE_BUCKET_LABELS
+    color_map_js = "{" + ", ".join(
+        f"'{b}': '{c}'" for b, c in LIFECYCLE_BUCKET_COLORS.items()
+    ) + "}"
+    label_map_js = "{" + ", ".join(
+        f"'{b}': '{lbl}'" for b, lbl in LIFECYCLE_BUCKET_LABELS.items()
+    ) + "}"
+    return JsCode(
+        f"""
+        function(params) {{
+            const colors = {color_map_js};
+            const labels = {label_map_js};
+            const value = params.value || '';
+            if (!value) return '';
+            const bg = colors[value] || '#6c757d';
+            const label = labels[value] || value;
+            return `<span style="background:${{bg}};color:#fff;` +
+                   `padding:2px 8px;border-radius:8px;font-size:0.8em;` +
+                   `font-weight:500;">${{label}}</span>`;
+        }}
+        """
+    )
+
+
+def _build_grid_options(
+    df: pd.DataFrame,
+    *,
+    row_height: int = 36,
+    multi_select: bool = False,
+    group_by_bucket: bool = False,
+) -> dict[str, Any]:
     gb = GridOptionsBuilder.from_dataframe(df)
 
-    # Default: read-only, filter row enabled, sortable.
     gb.configure_default_column(
         editable=False,
         sortable=True,
@@ -319,19 +379,18 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         floatingFilter=True,
     )
 
-    # id column: hidden, read-only. Used internally for the diff handler.
     gb.configure_column("id", hide=True, editable=False)
 
-    # job_number: read-only plain text.
     gb.configure_column(
         "job_number",
         header_name=COLUMN_HEADERS["job_number"],
         editable=False,
         width=110,
         pinned="left",
+        checkboxSelection=multi_select,
+        headerCheckboxSelection=multi_select,
     )
 
-    # name: editable text.
     gb.configure_column(
         "name",
         header_name=COLUMN_HEADERS["name"],
@@ -339,7 +398,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         minWidth=200,
     )
 
-    # status: editable via agSelectCellEditor, painted with the pill renderer.
     gb.configure_column(
         "status",
         header_name=COLUMN_HEADERS["status"],
@@ -348,11 +406,20 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         cellEditorParams={"values": list(PROJECT_STATUSES)},
         cellRenderer=_build_status_renderer(),
         width=140,
-        rowGroup=False,  # group toggled via column menu; default ungrouped
         enableRowGroup=True,
     )
 
-    # priority: editable via dropdown, colored dot renderer.
+    gb.configure_column(
+        "lifecycle_bucket",
+        header_name=COLUMN_HEADERS["lifecycle_bucket"],
+        editable=False,
+        cellRenderer=_build_bucket_renderer(),
+        width=120,
+        enableRowGroup=True,
+        rowGroup=group_by_bucket,
+        hide=not group_by_bucket,
+    )
+
     gb.configure_column(
         "priority",
         header_name=COLUMN_HEADERS["priority"],
@@ -363,7 +430,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         width=120,
     )
 
-    # percent_complete: editable number with progress bar renderer.
     gb.configure_column(
         "percent_complete",
         header_name=COLUMN_HEADERS["percent_complete"],
@@ -373,7 +439,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         type=["numericColumn"],
     )
 
-    # client_name: read-only.
     gb.configure_column(
         "client_name",
         header_name=COLUMN_HEADERS["client_name"],
@@ -381,7 +446,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         minWidth=160,
     )
 
-    # action_by, next_action: editable text.
     for col in ("action_by", "next_action"):
         gb.configure_column(
             col,
@@ -390,7 +454,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
             minWidth=130,
         )
 
-    # address, city, county: editable text.
     for col in ("address", "city", "county"):
         gb.configure_column(
             col,
@@ -399,7 +462,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
             minWidth=140,
         )
 
-    # scope, notes: editable with text wrapping (rows auto-size to content).
     for col in ("scope", "notes"):
         gb.configure_column(
             col,
@@ -410,7 +472,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
             minWidth=200,
         )
 
-    # contract_value: editable number, formatted as currency.
     gb.configure_column(
         "contract_value",
         header_name=COLUMN_HEADERS["contract_value"],
@@ -425,7 +486,6 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         width=120,
     )
 
-    # start_date, target_end_date: editable via agDateCellEditor.
     for col in ("start_date", "target_end_date"):
         gb.configure_column(
             col,
@@ -435,24 +495,29 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
             width=130,
         )
 
-    # Single-row selection drives the focus slot below the grid.
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    gb.configure_column(
+        "updated_at",
+        header_name=COLUMN_HEADERS["updated_at"],
+        editable=False,
+        valueFormatter=_build_relative_time_formatter(),
+        width=110,
+    )
 
-    # Show the column-tool sidebar so users can toggle group-by-status.
+    selection_mode = "multiple" if multi_select else "single"
+    gb.configure_selection(selection_mode=selection_mode, use_checkbox=False)
+
     gb.configure_side_bar()
 
     grid_options = gb.build()
 
-    # Disable mass-paste row creation. aggrid only adds rows if you set
-    # `processCellFromClipboard` to mutate the row count — we don't, so
-    # this is belt-and-suspenders. We also lock the row count by setting
-    # `suppressClipboardPaste=False` on cells but suppressing row insertion.
     grid_options["suppressClipboardPaste"] = False
     grid_options["suppressRowClickSelection"] = False
-    # Group-by-status is opt-in via the column menu; default to ungrouped.
     grid_options["rowGroupPanelShow"] = "always"
     grid_options["groupDisplayType"] = "groupRows"
     grid_options["animateRows"] = True
+    grid_options["rowHeight"] = row_height
+    grid_options["enableCellTextSelection"] = True
+    grid_options["accentedSort"] = True
 
     return grid_options
 
@@ -460,29 +525,138 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Public render entrypoint
 # ---------------------------------------------------------------------------
+def _apply_bulk_update(
+    conn: sqlite3.Connection,
+    pids: list[int],
+    **kwargs: Any,
+) -> tuple[int, list[str]]:
+    """Apply the same update to multiple projects. Returns (success_count, errors)."""
+    ok = 0
+    errors: list[str] = []
+    for pid in pids:
+        try:
+            update_project(conn, pid, **kwargs)
+            ok += 1
+        except (sqlite3.IntegrityError, ValueError) as exc:
+            errors.append(f"Project {pid}: {exc}")
+    return ok, errors
+
+
+def render_grid_toolbar(key: str = "ui:projects:grid") -> dict[str, Any]:
+    """Render density toggle and group-by-bucket controls above the grid.
+
+    Returns a dict with ``row_height``, ``multi_select``, ``group_by_bucket``.
+    """
+    st.session_state.setdefault(f"{key}:density", "Default")
+    st.session_state.setdefault(f"{key}:multi_select", False)
+    st.session_state.setdefault(f"{key}:group_by_bucket", False)
+
+    c1, c2, c3 = st.columns([3, 1, 1])
+    with c1:
+        density = st.segmented_control(
+            "Row density",
+            options=list(DENSITY_OPTIONS.keys()),
+            default=st.session_state[f"{key}:density"],
+            label_visibility="collapsed",
+            key=f"{key}:density_ctrl",
+        )
+        if density:
+            st.session_state[f"{key}:density"] = density
+
+    with c2:
+        multi = st.checkbox(
+            "Multi-select",
+            value=st.session_state[f"{key}:multi_select"],
+            key=f"{key}:multi_ctrl",
+        )
+        st.session_state[f"{key}:multi_select"] = multi
+
+    with c3:
+        bucket = st.checkbox(
+            "Group by bucket",
+            value=st.session_state[f"{key}:group_by_bucket"],
+            key=f"{key}:bucket_ctrl",
+        )
+        st.session_state[f"{key}:group_by_bucket"] = bucket
+
+    active_density = st.session_state[f"{key}:density"]
+    return {
+        "row_height": DENSITY_OPTIONS.get(active_density, 36),
+        "multi_select": st.session_state[f"{key}:multi_select"],
+        "group_by_bucket": st.session_state[f"{key}:group_by_bucket"],
+    }
+
+
+def render_bulk_bar(
+    conn: sqlite3.Connection,
+    selected_rows: list[dict[str, Any]],
+    key: str = "ui:projects:grid",
+) -> None:
+    """Render a bulk-action bar when multiple rows are selected."""
+    if len(selected_rows) < 2:
+        return
+
+    pids = []
+    for r in selected_rows:
+        try:
+            pids.append(int(r["id"]))
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    if not pids:
+        return
+
+    st.info(f"**{len(pids)} projects selected** — bulk update:")
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        new_status = st.selectbox(
+            "Set status",
+            options=[""] + list(PROJECT_STATUSES),
+            format_func=lambda v: PROJECT_STATUS_LABELS.get(v, "— Select —") if v else "— Select —",
+            key=f"{key}:bulk_status",
+        )
+    with c2:
+        new_priority = st.selectbox(
+            "Set priority",
+            options=[""] + list(PRIORITY_VALUES),
+            format_func=lambda v: PRIORITY_LABELS.get(v, "— Select —") if v else "— Select —",
+            key=f"{key}:bulk_priority",
+        )
+    with c3:
+        if st.button("Apply bulk update", key=f"{key}:bulk_apply", type="primary"):
+            kwargs: dict[str, Any] = {}
+            if new_status:
+                kwargs["status"] = new_status
+            if new_priority:
+                kwargs["priority"] = new_priority
+            if kwargs:
+                ok, errors = _apply_bulk_update(conn, pids, **kwargs)
+                if ok:
+                    st.toast(f"Updated {ok} projects", icon="✅")
+                for err in errors:
+                    st.error(err)
+                if ok:
+                    st.rerun()
+            else:
+                st.warning("Select a status or priority to apply.")
+
+
 def render_project_grid(
     conn: sqlite3.Connection,
     projects: Sequence[Mapping[str, Any]],
     key: str = "ui:projects:grid",
 ) -> dict[str, Any]:
-    """Render the AgGrid and route any cell edit through update_project.
-
-    Returns the aggrid response dict (contains ``data``, ``selected_rows``,
-    ``event_data``, etc.). Callers use ``selected_rows`` to drive focus.
-
-    The handler:
-      * Computes the diff between the row in the grid response and the row
-        we last saw from the DB (cached in session_state under
-        ``{key}:_baseline``).
-      * Calls ``handle_row_save`` per dirty row.
-      * Shows ``st.toast`` / ``st.error`` for feedback.
-      * Does NOT call ``st.rerun()`` — aggrid handles its own redraw.
-    """
+    """Render the AgGrid with toolbar, bulk bar, and inline edit handling."""
+    toolbar = render_grid_toolbar(key)
     df = projects_to_dataframe(projects)
-    grid_options = _build_grid_options(df)
+    grid_options = _build_grid_options(
+        df,
+        row_height=toolbar["row_height"],
+        multi_select=toolbar["multi_select"],
+        group_by_bucket=toolbar["group_by_bucket"],
+    )
 
-    # Baseline cache: maps pid -> row dict for the version we last sent to
-    # the grid. Used to compute the per-edit diff.
     baseline_key = f"{key}:_baseline"
     baseline: dict[int, dict[str, Any]] = {
         int(r["id"]): dict(r) for _, r in df.iterrows()
@@ -504,11 +678,16 @@ def render_project_grid(
         },
     )
 
+    # ----- Bulk action bar -----
+    selected = response.get("selected_rows")
+    if isinstance(selected, pd.DataFrame):
+        selected = selected.to_dict("records")
+    if selected and toolbar["multi_select"]:
+        render_bulk_bar(conn, selected, key)
+
     # ----- Process edits -----
     new_data = response.get("data")
     if new_data is not None:
-        # aggrid returns either a DataFrame or a list of dicts depending on
-        # `data_return_mode` + serialization settings. Normalize.
         if isinstance(new_data, pd.DataFrame):
             new_rows: Iterable[Mapping[str, Any]] = (
                 row for _, row in new_data.iterrows()
