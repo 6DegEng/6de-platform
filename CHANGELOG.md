@@ -1,5 +1,54 @@
 # Changelog
 
+## Phase 2 — SharePoint Document Layer — 2026-05-22
+
+Three back-to-back sessions stand up the SharePoint-as-document-store contract from `PLATFORM_GOAL_v1.md` Phase 2. Foundation → offline scaffolding + UI → live wire-up. The platform now writes generated PDFs to a real SharePoint document library via Microsoft Graph; the Documents tab on each project renders SharePoint URLs (or OneDrive paths for backfilled rows) and degrades gracefully when the Entra ID app reg is missing.
+
+### Session 2a — module scaffold + stub auth boundary
+
+- `modules/documents/sharepoint.py`: `get_graph_client()` boundary returns real `GraphServiceClient` when `MSGRAPH_CLIENT_ID` + `MSGRAPH_TENANT_ID` are set, otherwise `StubGraphClient` for offline dev.
+- `_TokenStore`: Fernet-encrypted refresh-token persistence at `MSGRAPH_TOKEN_PATH`; key from `SIXDE_TOKEN_KEY`.
+- `sanitize_filename` (Windows-illegal chars, whitespace normalization, 128-char segment cap), `encode_path` (preserves the intentional leading space in `01_ Active Projects`, percent-encodes at the Graph boundary).
+- `upload_bytes` / `upload_large` / `get_link` / `delete` / `list_folder` / `ensure_project_folder` stub path complete; real-Graph branches raise `NotImplementedError` pointing to Session 2c.
+- `record_upload` inserts `documents` row + writes `activity_log` from day one (S36 B4 directive).
+- `documents` table gains `sharepoint_item_id`, `sharepoint_web_url`, `sharepoint_drive_id`, `sha256` via `_ALTER_COLUMNS`.
+- 43 new unit tests (sanitization adversarials, path encoding, Fernet roundtrip, schema delta).
+
+### Session 2b — backfill scanner + Documents tab
+
+- `scripts/scan_existing_project_docs.py`: one-shot walker over the existing `06_Engineering/01_ Active Projects/` tree. Matches `{6-digit} - {name}` folders against `projects.job_number`, classifies each file via `classify_category()` into Calcs/Drawings/Permits/Billing/Correspondence, indexes metadata into `documents` without uploading. Idempotent. Writes one `activity_log` row per `--commit` run.
+- `classify_category()` heuristic map confirmed against real subfolder names ("Drainage Calculations", "Dwgs", "PPT", "Geotechnical Engineering", etc.) — 26 mapping cases unit-tested.
+- Documents tab on each project in `pages/1_Projects.py`: category-grouped listing, SharePoint URLs when populated, OneDrive-path fallback for backfilled rows, "SharePoint not configured" caption when env vars absent.
+- B22: confirmed `__pycache__/` already in `.gitignore`; sweep ran clean.
+
+### Session 2c — real msgraph-sdk wire-up
+
+- Replaced `NotImplementedError` in 6 `RealGraphClient` methods with live Microsoft Graph calls (msgraph-sdk 1.58.0).
+- Site/drive resolution: cached at module load via `client.sites.get_by_path(...).drive.get()`; new config keys `SIXDE_GRAPH_HOSTNAME` (default `6thdegreeengineering.sharepoint.com`) and `SIXDE_GRAPH_SITE_PATH` (default `/sites/6thDegreeEngineering`).
+- `_ensure_folder`: `conflictBehavior=fail` + 409→GET fallback (NOT `rename` — would create `Calcs 1`, `Calcs 2` on re-runs).
+- `_driveitem_to_dict()` projection at the SDK boundary keeps the camelCase dict contract — every caller (record_upload, Documents tab) is unchanged.
+- New `DocumentMissingError(RuntimeError)` for 404 ODataErrors on `get_link()` / `delete()`. Callers wanting idempotent delete `except DocumentMissingError: pass`.
+- `retry_with_backoff_async` wraps the 4 mutating methods. Structured detection via `ODataError.response_status_code` (429 or any 5xx) with string-match fallback. Honors `Retry-After` header (capped at `max_delay`); otherwise exponential schedule + jitter. Uses `asyncio.sleep` so the graph loop thread isn't blocked.
+- Persistent event loop via a daemon thread (`_get_graph_loop` / `_run_on_graph_loop`) — fixes the proactor-cleanup race that crashed `get_link` after a successful upload on Windows because msgraph-sdk/MSAL/kiota bind to the first loop that touches them.
+- Auth: dropped `offline_access` from explicit scopes (MSAL ≥1.36 raises on reserved scopes; refresh-token issuance is unaffected — MSAL adds it implicitly).
+- `python-dotenv` loaded at startup so `.env` reaches the launcher process.
+- 5 new retry/backoff unit tests using a fake `ODataError`; `asyncio.sleep` monkey-patched to a capturing no-op so tests don't actually sleep.
+- Live smoke driver at `scripts/smoke_sharepoint_upload.py` round-trips a 1KB payload through upload → get_link → list_folder → delete → 404-check against the production tenant. This is the live-tier evidence; pytest-marked live test deferred.
+- Verifier spec at `docs/specs/sharepoint_session_2c.md` documents the 9 stub-vs-SDK mismatches and the resolutions Juan picked.
+
+### Tests
+- 110/110 platform tests pass at Phase 2 close. Stub path remains the default when env vars are unset; every existing test still exercises it.
+
+### Out of scope (filed for future sessions)
+- `tests/test_sharepoint_live.py` (pytest-gated live test) — smoke script substitutes for now.
+- `scripts/scan_existing_project_docs.py` against live SharePoint — manual single-file UI upload preferred for first prod-tier validation.
+- streamlit-authenticator JWT key length (cosmetic warning), 12 completed projects still in active-projects folder, 3 disk-only projects missing from DB, 31 unclassified subfolder names — all in `docs/qa/session_2c_blocked.md` §TODOs.
+
+### Version
+- Bumped to v3.3 in `streamlit_app/Home.py`.
+
+---
+
 ## Session 35 — 2026-05-14
 
 ### Bug Fixes (Critical)
