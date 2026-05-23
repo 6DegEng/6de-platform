@@ -138,7 +138,7 @@ def test_switch_to_timeline_does_not_crash(projects_page):
 
 
 def test_switch_to_calendar_does_not_crash(projects_page):
-    """The Calendar placeholder renders cleanly (info banner + month metric)."""
+    """The Calendar view renders cleanly — with or without streamlit-calendar."""
     at = projects_page.run(timeout=30)
     assert not at.exception, f"Initial render raised: {at.exception}"
 

@@ -1643,7 +1643,14 @@ def render_calendar_view(projects: Sequence) -> None:
     """
     import html as _html
 
-    from streamlit_calendar import calendar
+    try:
+        from streamlit_calendar import calendar
+    except ImportError:
+        st.warning(
+            "Install **streamlit-calendar** (`pip install streamlit-calendar`) "
+            "to enable the Calendar view."
+        )
+        return
 
     # ------- Archived toggle (mirrors Kanban / Timeline) -------
     show_archived = st.checkbox(

@@ -27,6 +27,11 @@ import streamlit as st
 from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder, JsCode
 
 from modules.projects.crud import update_project
+from modules.projects.workflow import (
+    PRIORITY_COLORS,
+    PRIORITY_LABELS,
+    PRIORITY_VALUES,
+)
 from streamlit_app.components.status_pills import (
     PROJECT_STATUS_COLORS,
     PROJECT_STATUS_LABELS,
@@ -35,57 +40,66 @@ from streamlit_app.components.status_pills import (
 
 
 # ---------------------------------------------------------------------------
-# Columns the grid surfaces, left-to-right. Session 3b columns
-# (priority, percent_complete, contract_value, etc.) are intentionally
-# omitted — those land in a later session.
+# Columns the grid surfaces, left-to-right.
 # ---------------------------------------------------------------------------
 EDITABLE_COLUMNS: tuple[str, ...] = (
     "name",
     "status",
+    "priority",
+    "percent_complete",
+    "action_by",
+    "next_action",
     "address",
     "city",
     "county",
     "scope",
+    "contract_value",
     "start_date",
     "target_end_date",
     "notes",
 )
 
-# Read-only columns. We surface them but lock them from inline edits.
 READONLY_COLUMNS: tuple[str, ...] = (
     "id",
     "job_number",
     "client_name",
 )
 
-# Order of columns as they appear in the grid (id is hidden but kept so the
-# diff handler can map back to the project row).
 GRID_COLUMN_ORDER: tuple[str, ...] = (
     "id",
     "job_number",
     "name",
     "status",
+    "priority",
+    "percent_complete",
     "client_name",
+    "action_by",
+    "next_action",
     "address",
     "city",
     "county",
     "scope",
+    "contract_value",
     "start_date",
     "target_end_date",
     "notes",
 )
 
-# Human-readable headers for the grid columns.
 COLUMN_HEADERS: dict[str, str] = {
     "id": "ID",
     "job_number": "Job #",
     "name": "Project",
     "status": "Status",
+    "priority": "Priority",
+    "percent_complete": "% Complete",
     "client_name": "Client",
+    "action_by": "Action By",
+    "next_action": "Next Action",
     "address": "Address",
     "city": "City",
     "county": "County",
     "scope": "Scope",
+    "contract_value": "Contract $",
     "start_date": "Start",
     "target_end_date": "Target Close",
     "notes": "Notes",
@@ -122,18 +136,61 @@ def _build_status_renderer() -> JsCode:
     )
 
 
+def _build_priority_renderer() -> JsCode:
+    color_map_js = "{" + ", ".join(
+        f"'{p}': '{c}'" for p, c in PRIORITY_COLORS.items()
+    ) + "}"
+    label_map_js = "{" + ", ".join(
+        f"'{p}': '{lbl}'" for p, lbl in PRIORITY_LABELS.items()
+    ) + "}"
+    return JsCode(
+        f"""
+        function(params) {{
+            const colors = {color_map_js};
+            const labels = {label_map_js};
+            const value = params.value || '';
+            if (!value) return '';
+            const color = colors[value] || '#6B7280';
+            const label = labels[value] || value;
+            return `<span style="color:${{color}};font-weight:600;` +
+                   `font-size:0.85em;">● ${{label}}</span>`;
+        }}
+        """
+    )
+
+
+def _build_percent_renderer() -> JsCode:
+    return JsCode(
+        """
+        function(params) {
+            const val = params.value;
+            if (val === null || val === undefined || val === '') return '';
+            const pct = Math.round(Number(val));
+            const width = Math.min(100, Math.max(0, pct));
+            const color = pct >= 100 ? '#22C55E' : pct >= 50 ? '#3B82F6' : '#F59E0B';
+            return `<div style="display:flex;align-items:center;gap:6px;">` +
+                   `<div style="flex:1;background:#e5e7eb;border-radius:4px;height:8px;">` +
+                   `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
+                   `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
+        }
+        """
+    )
+
+
 # ---------------------------------------------------------------------------
 # DataFrame normalization — list_projects() returns sqlite3.Row instances.
 # The grid wants a plain pandas DataFrame with stringy date columns and a
 # stable column order matching GRID_COLUMN_ORDER.
 # ---------------------------------------------------------------------------
+_NUMERIC_COLUMNS = {"percent_complete", "contract_value"}
+
+
 def projects_to_dataframe(projects: Sequence[Mapping[str, Any]]) -> pd.DataFrame:
     """Convert a sequence of sqlite3.Row-like rows into the grid DataFrame.
 
-    Only the columns this grid surfaces survive — others are dropped to
-    keep the grid lean and avoid leaking Session 3b columns into the view.
-    Missing values become empty strings (aggrid renders ``None`` as the
-    literal "None" otherwise).
+    Only the columns this grid surfaces survive — others are dropped.
+    Missing text values become empty strings (aggrid renders ``None`` as the
+    literal "None" otherwise). Numeric columns keep their native type.
     """
     rows: list[dict[str, Any]] = []
     for p in projects:
@@ -143,10 +200,11 @@ def projects_to_dataframe(projects: Sequence[Mapping[str, Any]]) -> pd.DataFrame
                 val = p[col]
             except (KeyError, IndexError):
                 val = None
-            row[col] = "" if val is None else val
+            if val is None and col not in _NUMERIC_COLUMNS:
+                val = ""
+            row[col] = val
         rows.append(row)
     df = pd.DataFrame(rows, columns=list(GRID_COLUMN_ORDER))
-    # Coerce id to int even if pandas inferred float because of NaNs.
     if not df.empty:
         df["id"] = df["id"].astype(int)
     return df
@@ -217,10 +275,32 @@ def handle_row_save(
             f"{', '.join(PROJECT_STATUSES)}."
         )
 
+    if "priority" in changes:
+        pv = changes["priority"]
+        if pv and pv not in PRIORITY_VALUES:
+            return (
+                f"Invalid priority: {pv!r}. Must be one of "
+                f"{', '.join(PRIORITY_VALUES)}."
+            )
+        if not pv:
+            changes["priority"] = None
+
+    if "percent_complete" in changes:
+        try:
+            changes["percent_complete"] = max(0, min(100, int(float(changes["percent_complete"] or 0))))
+        except (ValueError, TypeError):
+            changes["percent_complete"] = 0
+
+    if "contract_value" in changes:
+        try:
+            changes["contract_value"] = float(changes["contract_value"] or 0)
+        except (ValueError, TypeError):
+            changes["contract_value"] = 0
+
     try:
         update_project(conn, int(pid), **changes)
-    except sqlite3.IntegrityError as exc:
-        return f"Database rejected the change: {exc}"
+    except (sqlite3.IntegrityError, ValueError) as exc:
+        return f"Update rejected: {exc}"
     return None
 
 
@@ -272,6 +352,27 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         enableRowGroup=True,
     )
 
+    # priority: editable via dropdown, colored dot renderer.
+    gb.configure_column(
+        "priority",
+        header_name=COLUMN_HEADERS["priority"],
+        editable=True,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": [""] + list(PRIORITY_VALUES)},
+        cellRenderer=_build_priority_renderer(),
+        width=120,
+    )
+
+    # percent_complete: editable number with progress bar renderer.
+    gb.configure_column(
+        "percent_complete",
+        header_name=COLUMN_HEADERS["percent_complete"],
+        editable=True,
+        cellRenderer=_build_percent_renderer(),
+        width=140,
+        type=["numericColumn"],
+    )
+
     # client_name: read-only.
     gb.configure_column(
         "client_name",
@@ -279,6 +380,15 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
         editable=False,
         minWidth=160,
     )
+
+    # action_by, next_action: editable text.
+    for col in ("action_by", "next_action"):
+        gb.configure_column(
+            col,
+            header_name=COLUMN_HEADERS[col],
+            editable=True,
+            minWidth=130,
+        )
 
     # address, city, county: editable text.
     for col in ("address", "city", "county"):
@@ -299,6 +409,21 @@ def _build_grid_options(df: pd.DataFrame) -> dict[str, Any]:
             autoHeight=True,
             minWidth=200,
         )
+
+    # contract_value: editable number, formatted as currency.
+    gb.configure_column(
+        "contract_value",
+        header_name=COLUMN_HEADERS["contract_value"],
+        editable=True,
+        type=["numericColumn"],
+        valueFormatter=JsCode(
+            """function(params) {
+                if (params.value === null || params.value === undefined || params.value === '' || params.value === 0) return '';
+                return '$' + Number(params.value).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+            }"""
+        ),
+        width=120,
+    )
 
     # start_date, target_end_date: editable via agDateCellEditor.
     for col in ("start_date", "target_end_date"):

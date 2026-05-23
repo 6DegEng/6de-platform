@@ -196,3 +196,70 @@ def test_diff_row_ignores_readonly_columns():
     old = {"name": "X", "job_number": "260101", "client_name": "Acme", "id": 1}
     new = {"name": "X", "job_number": "999999", "client_name": "Other", "id": 1}
     assert diff_row(old, new) == {}
+
+
+# ---------------------------------------------------------------------------
+# Session 3b column tests — priority, percent_complete, contract_value
+# ---------------------------------------------------------------------------
+def test_inline_edit_rejects_invalid_priority(db):
+    """A priority value outside PRIORITY_VALUES MUST be rejected."""
+    pid = _seed_project(db)
+    old_row = _project_row_dict(db, pid)
+    new_row = dict(old_row)
+    new_row["priority"] = "extreme"
+
+    with mock.patch(
+        "streamlit_app.components.project_grid.update_project"
+    ) as mock_update:
+        error = handle_row_save(db, old_row, new_row)
+
+    assert error is not None
+    assert "extreme" in error
+    assert mock_update.call_count == 0
+
+
+def test_inline_edit_clamps_percent_complete(db):
+    """percent_complete > 100 is clamped to 100."""
+    pid = _seed_project(db)
+    old_row = _project_row_dict(db, pid)
+    new_row = dict(old_row)
+    new_row["percent_complete"] = "150"
+
+    error = handle_row_save(db, old_row, new_row)
+    assert error is None
+
+    row = db.execute(
+        "SELECT percent_complete FROM projects WHERE id = ?", (pid,)
+    ).fetchone()
+    assert row["percent_complete"] == 100
+
+
+def test_inline_edit_accepts_valid_priority(db):
+    """A valid priority value is persisted."""
+    pid = _seed_project(db)
+    old_row = _project_row_dict(db, pid)
+    new_row = dict(old_row)
+    new_row["priority"] = "high"
+
+    error = handle_row_save(db, old_row, new_row)
+    assert error is None
+
+    row = db.execute(
+        "SELECT priority FROM projects WHERE id = ?", (pid,)
+    ).fetchone()
+    assert row["priority"] == "high"
+
+
+def test_diff_row_detects_new_column_changes():
+    """priority, action_by, percent_complete, contract_value are all editable."""
+    old = {"name": "X", "priority": "", "action_by": "", "percent_complete": 0,
+           "contract_value": 0, "next_action": "", "id": 1}
+    new = {"name": "X", "priority": "high", "action_by": "6DE",
+           "percent_complete": 50, "contract_value": 15000,
+           "next_action": "Submit report", "id": 1}
+    changes = diff_row(old, new)
+    assert "priority" in changes
+    assert "action_by" in changes
+    assert "percent_complete" in changes
+    assert "contract_value" in changes
+    assert "next_action" in changes
