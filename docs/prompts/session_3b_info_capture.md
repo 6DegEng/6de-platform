@@ -1,5 +1,40 @@
 # Session 3b — Project Information Capture
 
+> **Refresh log**
+>
+> - **2026-05-23 (Juan, Home Desktop):** Session 3a (Projects UI uplift) merged to `main` as v3.4 (`bcc46b8`). Repo cleanup ran the same day — closed-session notes, scout reports, and stale launchers moved into `archive/` and `docs/archive/`. A Chrome smoke test on the live build identified five cosmetic / configuration issues — see [Known issues to fold in](#known-issues-to-fold-in) below. The 3b prompt body itself is unchanged from the original draft; only this preamble is new.
+
+---
+
+## Office-PC kickoff checklist
+
+When you sit down at the office machine to start this session, run through this once:
+
+1. `git fetch && git pull` on the Company Platform repo so the office checkout has v3.4 + the 2026-05-23 cleanup commit. The repo path on the office PC should mirror the home-desktop layout: `02_Information Technology/07_Company_Platform`.
+2. Confirm the working tree is clean: `git status` should be empty, `git log --oneline -3` should show the cleanup commit on top of the v3.4 release tag.
+3. Boot the platform once to verify the office PC has matching deps: double-click `Launch_6DE_Platform.bat` → wait for browser → confirm Dashboard loads and shows "ERP Platform v3.4" in the sidebar. If imports fail, `pip install -r requirements.txt` (the v3.4 deps closed out `streamlit-elements`, so a stale env may need cleanup — `pip uninstall streamlit-elements -y` is safe).
+4. Open `docs/qa/session_3a_chrome_smoke.md` and skim the five known issues. They're all queued for **subagent 6 (ui-polish)** below — not a separate work item.
+5. Open `06_Engineering/01_ Active Projects/Project_Tracker_2026.xlsx` once before you fire off the prompt — eyeball the Projects sheet header row (row 3) and any row with Priority/Action By/Next Action populated, so you have a real-world reference for the spec-writer's output to compare against.
+6. Create the branch yourself, then paste the prompt: `git checkout -b feature/project-info-capture`.
+
+That's the entire ritual. If any of those steps surprise you, **stop and resync** before running the autonomous prompt — Session 3b creates schema migrations, and you don't want them landing on a stale branch.
+
+---
+
+## Known issues to fold in
+
+Five issues caught during the 2026-05-23 Chrome smoke test on v3.4 (see `docs/qa/session_3a_chrome_smoke.md` for full reproductions). All map to **subagent 6 (ui-polish)** — expand its scope to cover these alongside the new field columns:
+
+1. **Table view — `<span>` HTML escaped into the Status column.** The status pill renderer is outputting raw `<sp...` text. Fix the cell renderer to allow HTML (or switch to a JsCode renderer that builds the pill DOM directly).
+2. **Table view — column headers truncated** (`J..`, `S..`, `T..`). Set explicit `min_width` per column or use `autoSizeStrategy: fitGridWidth` with weights.
+3. **Table view — AG Grid `#200` console errors** for `sideBar`, `rowGroupPanelShow`, `enableRowGroup`. Either strip the enterprise-only options from gridOptions or accept the warnings if there's a plan to upgrade. (Recommend strip — community AG Grid is fine for what we need.)
+4. **Timeline view — Y-axis project labels truncated to 1-2 chars.** Widen the y-axis label area; consider `<job#> — <short_name>` format to keep labels compact.
+5. **Home — Vega-Lite "Infinite extent" warnings** on empty charts. Short-circuit to "(no data)" placeholder when the source df is empty.
+
+None of these block Session 3b functionally — they're cosmetic. But they're the kind of thing that's cheap to fix while subagent 6 is already in that file, and they make the 3a work feel finished.
+
+---
+
 **Goal:** Turn the Projects page from "list of records" into a project knowledge base. Capture the rich data the legacy `Project_Tracker_2026.xlsx` had (Priority, Action By, Next Action, % Complete, Contact, financials, Notes) — plus a real per-project Notes/Updates/Contacts story. Make the Projects detail view a single place to find everything about a project.
 
 **Branch:** create `feature/project-info-capture` off the post-3a state.
@@ -153,7 +188,25 @@ ORCHESTRATION — seven subagents, sequential.
    next_action, % complete bar as columns. Add filtering by priority. Add
    sort-by-age-descending. Add a "% complete" bar renderer using HTML in
    the cell.
-   Commit: `feat(projects): expose new fields in aggrid table view`.
+
+   ALSO fold in the five 2026-05-23 Chrome smoke findings
+   (docs/qa/session_3a_chrome_smoke.md):
+     a. Fix the Table view status column — `<span>` HTML is being escaped
+        instead of rendered. The same cellRenderer mechanism you'll use for
+        the new priority pill should fix both at once.
+     b. Set sensible min_width per column so headers don't truncate to "J.."
+        / "S.." / "T..".
+     c. Strip the enterprise-only gridOptions (sideBar, rowGroupPanelShow,
+        enableRowGroup) that throw AG Grid #200 errors on the console —
+        we don't have the enterprise build and don't plan to.
+     d. Widen the Timeline view's y-axis label area so project names aren't
+        clipped to 1-2 characters. Use a "<job#> — <name>" label format.
+     e. Add empty-data guards on the Home dashboard charts so Vega-Lite
+        doesn't log "Infinite extent" warnings when a series is empty.
+   These are cosmetic, not blockers — but they're cheap to fix while you're
+   already touching the renderer code.
+
+   Commit: `feat(projects): expose new fields in aggrid table view + 3a polish`.
 
 7. integration-verifier
    Full pytest suite. Boot platform. Smoke checklist:
@@ -166,6 +219,9 @@ ORCHESTRATION — seven subagents, sequential.
      f. Set percent_complete=50 → verify bar in aggrid
      g. Run scripts/import_legacy_project_tracker.py --dry-run → review output
         with Juan, don't commit
+     h. Re-run the 2026-05-23 Chrome smoke checklist
+        (docs/qa/session_3a_chrome_smoke.md) and confirm the five findings
+        are resolved.
    Write docs/qa/session_3b_verification.md.
 
 GUARDRAILS
@@ -205,6 +261,7 @@ DELIVERABLES
 - scripts/import_legacy_project_tracker.py (dry-run validated only)
 - docs/specs/3b_data_model.md, docs/qa/session_3b_verification.md
 - Status workflow constants in a shared module
+- The five 2026-05-23 Chrome smoke findings resolved (subagent 6)
 
 Begin with subagent 1 (spec-writer). Read the legacy xlsx FIRST before
 proposing schema — its column shape is the design input.
@@ -219,3 +276,4 @@ proposing schema — its column shape is the design input.
 - **`project_updates` vs `activity_log` is a real distinction.** activity_log is system-generated (project_created, status_changed, document_indexed). project_updates is human-authored (the "I spoke with FDOT today" entries). The Activity tab from Session 3a unifies them in a feed, but the underlying tables are separate so the data stays clean.
 - **Status enum expansion is a one-way door.** Once you add AHJ/Permitting as a valid status, you'll have rows with that value. Make sure the enum list in the spec doc is what you want before the migration runs.
 - **Tabs are starting to multiply.** After 3b, the project detail view has 9 tabs (Details · Notes · Contacts · Updates · Activity · Milestones · Calculations · Documents · Edit). That's the upper bound of usable horizontal tabs. If you ever want more, switch to a sidebar nav or merge tabs.
+- **The cleanup commit on 2026-05-23 archived a lot of closed-session noise.** If you need any of it, look under `archive/` (root scratch + old session notes) or `docs/archive/` (closed prompts, scouts, and verifications). Nothing was deleted from git history — `git log -- <old-path>` still finds prior commits.
