@@ -11,6 +11,7 @@ three views are placeholders for subagents 4-6 to fill in.
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 import sys
 from datetime import date, datetime
@@ -765,25 +766,170 @@ def render_table_view(projects: Sequence) -> None:
     _render_project_detail_tabs(focus_proj, tab_idx=0)
 
 
-def render_kanban_view(projects: Sequence) -> None:
-    """Kanban view stub — fills in for subagent 5.
+def _render_kanban_card(proj, status: str) -> None:
+    """Render one Kanban card with status-colored left border + metadata.
 
-    Shows per-status counts using the new palette so the colors can be
-    verified visually before the real board lands.
+    The card uses ``unsafe_allow_html=True`` to draw the colored border
+    + light gray panel. A small selectbox + View button sit below the
+    HTML block (Streamlit widgets cannot live inside a raw HTML span).
     """
-    st.info("Kanban view — coming up next. Click cards to open project details.")
-    if not projects:
-        st.caption("No projects to summarize.")
-        return
-    counts: dict[str, int] = {s: 0 for s in PROJECT_STATUSES}
-    for p in projects:
-        if p["status"] in counts:
-            counts[p["status"]] += 1
-    summary_cols = st.columns(len(PROJECT_STATUSES))
-    for col, status in zip(summary_cols, PROJECT_STATUSES):
+    from streamlit_app.components.status_pills import PROJECT_STATUS_COLORS
+
+    pid = proj["id"]
+    border_color = PROJECT_STATUS_COLORS.get(status, "#6c757d")
+    name = proj["name"] or ""
+    display_name = name if len(name) <= 40 else name[:37] + "..."
+    client = proj["client_name"] or "—"
+    target = proj["target_end_date"] or "—"
+
+    # Escape HTML special chars in user-supplied text — name / client may
+    # contain ampersands or angle brackets.
+    import html as _html
+    safe_job = _html.escape(str(proj["job_number"]))
+    safe_name = _html.escape(display_name)
+    safe_full_name = _html.escape(name)
+    safe_client = _html.escape(str(client))
+    safe_target = _html.escape(str(target))
+
+    card_html = (
+        f'<div style="border-left:4px solid {border_color};'
+        f"background:#f8f9fa;padding:8px 12px;border-radius:4px;"
+        f'margin-bottom:8px;" title="{safe_full_name}">'
+        f'<div style="font-weight:bold;font-size:0.95em;">{safe_job}</div>'
+        f'<div style="font-size:0.9em;color:#1f2937;">{safe_name}</div>'
+        f'<div style="font-size:0.78em;color:#6b7280;">'
+        f"Client: {safe_client}</div>"
+        f'<div style="font-size:0.78em;color:#6b7280;">'
+        f"Target: {safe_target}</div>"
+        f"</div>"
+    )
+    st.markdown(card_html, unsafe_allow_html=True)
+
+    # Status change + View button row.
+    ctl_col1, ctl_col2 = st.columns([2, 1])
+    with ctl_col1:
+        current_idx = (
+            PROJECT_STATUSES.index(proj["status"])
+            if proj["status"] in PROJECT_STATUSES
+            else 0
+        )
+        new_status = st.selectbox(
+            "Status",
+            list(PROJECT_STATUSES),
+            index=current_idx,
+            format_func=lambda s: PROJECT_STATUS_LABELS.get(s, s),
+            label_visibility="collapsed",
+            key=f"kanban_status_p{pid}",
+        )
+        if new_status != proj["status"]:
+            if new_status not in PROJECT_STATUSES:
+                st.error(f"Invalid status: {new_status!r}")
+            else:
+                try:
+                    update_project(conn, pid, status=new_status)
+                    st.toast(
+                        f"{proj['job_number']} → "
+                        f"{PROJECT_STATUS_LABELS[new_status]}",
+                        icon="✅",
+                    )
+                    st.rerun()
+                except sqlite3.IntegrityError as exc:
+                    st.error(f"Database rejected status change: {exc}")
+                except ValueError as exc:
+                    st.error(f"Could not change status: {exc}")
+    with ctl_col2:
+        if st.button("View", key=f"kanban_open_p{pid}"):
+            st.session_state["ui:projects:focus"] = pid
+            st.rerun()
+
+
+def render_kanban_view(projects: Sequence) -> None:
+    """Monday-style board: one column per status, cards inside.
+
+    Cross-column DnD via ``streamlit-sortables`` was evaluated but rejected:
+    the library only accepts ``list[str]`` items, which precludes the rich
+    card layout the prompt specifies (bold job number, truncated name,
+    client / target-close captions, View button). The cleaner fallback —
+    a per-card selectbox bound to ``PROJECT_STATUSES`` — ships here. Every
+    status change still routes through ``update_project`` so the
+    ``activity_log`` row gets written by the service layer.
+
+    Archived projects are hidden by default; toggle the checkbox to show
+    them as a 5th column.
+    """
+    # ------- Archived toggle -------
+    show_archived = st.checkbox(
+        "Show archived",
+        value=False,
+        key="ui:projects:kanban_show_archived",
+    )
+
+    if show_archived:
+        visible_statuses = list(PROJECT_STATUSES)
+        kanban_projects = list(projects)
+    else:
+        visible_statuses = [s for s in PROJECT_STATUSES if s != "archived"]
+        kanban_projects = [p for p in projects if p["status"] != "archived"]
+
+    # Update the test hook to reflect what's ACTUALLY rendered post-filter.
+    st.session_state["ui:projects:_test_visible_ids"] = [
+        p["id"] for p in kanban_projects
+    ]
+
+    if not kanban_projects:
+        if not show_archived and any(p["status"] == "archived" for p in projects):
+            st.info(
+                "No projects in non-archived statuses. Toggle "
+                '"Show archived" to surface the rest.'
+            )
+        else:
+            st.info("No projects to display.")
+        # Still render the column scaffold so the headers stay visible.
+
+    # ------- Bucket projects by status -------
+    buckets: dict[str, list] = {s: [] for s in visible_statuses}
+    for p in kanban_projects:
+        if p["status"] in buckets:
+            buckets[p["status"]].append(p)
+
+    # ------- Render columns -------
+    columns = st.columns(len(visible_statuses))
+    for col, status in zip(columns, visible_statuses):
         with col:
-            st.markdown(render_status_pill(status), unsafe_allow_html=True)
-            st.metric(label=PROJECT_STATUS_LABELS[status], value=counts[status])
+            pill_html = render_status_pill(status)
+            count = len(buckets[status])
+            st.markdown(
+                f"{pill_html} <span style='color:#6b7280;font-size:0.9em;'>"
+                f"({count})</span>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("")  # small spacer
+            if not buckets[status]:
+                st.caption("Empty")
+                continue
+            for proj in buckets[status]:
+                _render_kanban_card(proj, status)
+
+    # ------- Detail panel for the focused project -------
+    focus_pid = st.session_state.get("ui:projects:focus")
+    visible_ids = {p["id"] for p in kanban_projects}
+    if focus_pid is None or focus_pid not in visible_ids:
+        return
+
+    focus_proj = next(p for p in kanban_projects if p["id"] == focus_pid)
+    st.markdown("---")
+    header_label = f"{focus_proj['job_number']} — {focus_proj['name']}"
+    head_col1, head_col2 = st.columns([6, 1])
+    with head_col1:
+        st.subheader(header_label)
+    with head_col2:
+        if st.button(
+            "← Close",
+            key=f"close_detail_kanban_p{focus_pid}",
+        ):
+            st.session_state["ui:projects:focus"] = None
+            st.rerun()
+    _render_project_detail_tabs(focus_proj, tab_idx=1)
 
 
 def render_timeline_view(projects: Sequence) -> None:
