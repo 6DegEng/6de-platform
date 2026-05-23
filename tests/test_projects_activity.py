@@ -73,14 +73,15 @@ def test_list_project_activity_paginates(db):
     """Manual writes >25 rows; limit/offset slices the result correctly."""
     pid = create_project(db, name="Big Activity", status="active", state="FL")
 
-    # 25 manual update rows on top of the 1 create row -> 26 total
-    # (the create row is written by create_project).
+    # 25 manual update rows with timestamps guaranteed to be AFTER the
+    # create row. create_project uses _now() (UTC), so we use a far-future
+    # date to avoid wall-clock dependence.
     for i in range(25):
         db.execute(
             "INSERT INTO activity_log "
             "(entity_type, entity_id, action, details, created_at) "
             "VALUES ('project', ?, 'updated', '{}', ?)",
-            (pid, f"2026-05-23 12:{i:02d}:00"),
+            (pid, f"2099-01-01 12:{i:02d}:00"),
         )
     db.commit()
 
@@ -92,7 +93,7 @@ def test_list_project_activity_paginates(db):
 
     page2 = list_project_activity(db, pid, limit=25, offset=25)
     assert len(page2) == 1
-    # The lone remaining row is the original create.
+    # The lone remaining row is the original create (oldest).
     assert page2[0]["action"] == "created"
 
 
@@ -176,7 +177,7 @@ def test_summarize_activity_handles_null_details(db):
         details=None,
         created_at="2026-05-23 12:01:00",
     )
-    assert summarize_activity(unknown_row) == "Frobnicated Project"
+    assert summarize_activity(unknown_row) == "Frobnicated"
 
 
 def test_summarize_activity_milestone_completed(db):

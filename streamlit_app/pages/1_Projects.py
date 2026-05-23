@@ -221,40 +221,55 @@ with st.form("project_search_form", clear_on_submit=False, border=False):
 # ---------------------------------------------------------------------------
 # View switcher + status filter
 # ---------------------------------------------------------------------------
-view_col, filter_col = st.columns([2, 5])
 
-with view_col:
-    st.radio(
-        "View",
-        options=["Table", "Kanban", "Timeline", "Calendar"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="ui:projects:view",
-    )
 
-with filter_col:
-    # Status filter — single segmented control replaces the old 6-tab strip.
-    # "All" maps to None; each named status maps to its enum value.
-    _filter_options = ["All"] + [PROJECT_STATUS_LABELS[s] for s in PROJECT_STATUSES]
-    _current = st.session_state["ui:projects:status_filter"]
-    _current_label = (
-        "All" if _current is None else PROJECT_STATUS_LABELS.get(_current, "All")
-    )
-    selected_label = st.segmented_control(
-        "Status filter",
-        options=_filter_options,
-        default=_current_label,
-        label_visibility="collapsed",
-        key="ui:projects:status_filter_widget",
-    )
-    if selected_label is None or selected_label == "All":
-        st.session_state["ui:projects:status_filter"] = None
-    else:
-        # Reverse-lookup label -> enum value.
-        for _enum, _lbl in PROJECT_STATUS_LABELS.items():
-            if _lbl == selected_label:
-                st.session_state["ui:projects:status_filter"] = _enum
-                break
+def render_filters() -> dict:
+    """Render the view switcher + status filter and return active filter state.
+
+    Extracted as a function so subagent 6 / saved-view loading can call
+    this without rewriting the filter wiring. Returns a dict with:
+      - "view": str — the active view name
+      - "status_filter": str | None — the active status enum or None for All
+    """
+    view_col, filter_col = st.columns([2, 5])
+
+    with view_col:
+        st.radio(
+            "View",
+            options=["Table", "Kanban", "Timeline", "Calendar"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="ui:projects:view",
+        )
+
+    with filter_col:
+        _filter_options = ["All"] + [PROJECT_STATUS_LABELS[s] for s in PROJECT_STATUSES]
+        _current = st.session_state["ui:projects:status_filter"]
+        _current_label = (
+            "All" if _current is None else PROJECT_STATUS_LABELS.get(_current, "All")
+        )
+        selected_label = st.segmented_control(
+            "Status filter",
+            options=_filter_options,
+            default=_current_label,
+            label_visibility="collapsed",
+            key="ui:projects:status_filter_widget",
+        )
+        if selected_label is None or selected_label == "All":
+            st.session_state["ui:projects:status_filter"] = None
+        else:
+            for _enum, _lbl in PROJECT_STATUS_LABELS.items():
+                if _lbl == selected_label:
+                    st.session_state["ui:projects:status_filter"] = _enum
+                    break
+
+    return {
+        "view": st.session_state["ui:projects:view"],
+        "status_filter": st.session_state["ui:projects:status_filter"],
+    }
+
+
+render_filters()
 
 status_filter: Optional[str] = st.session_state["ui:projects:status_filter"]
 

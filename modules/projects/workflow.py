@@ -4,6 +4,9 @@ Single source of truth for allowed status transitions. The status enum
 values live in ``streamlit_app/components/status_pills.py``; this module
 owns the transition rules and validation logic that the service layer
 and UI both call.
+
+Future automation rules must support AND/OR compound conditions (e.g.
+"status=completed AND percent_complete=100"), not just single triggers.
 """
 
 from __future__ import annotations
@@ -28,6 +31,10 @@ PRIORITY_COLORS = {
     "high": "#F59E0B",
     "urgent": "#EF4444",
 }
+
+# TODO: When a project transitions to a terminal status (completed, cancelled,
+# archived), also set its lifecycle_bucket — wire when bucket column lands.
+# See docs/import/legacy_status_map.md for the bucket groupings.
 
 STATUS_TRANSITIONS: dict[str, set[str]] = {
     "prospect":       {"active", "cancelled", "archived"},

@@ -1,0 +1,68 @@
+# Column-name remapping for legacy xlsx → 6DE platform fields.
+#
+# Keys are the header strings found in the legacy spreadsheet (case-insensitive
+# match after strip). Values are the projects table column they map to.
+#
+# Unmapped columns are ignored during import. Columns not present in the
+# spreadsheet are left NULL unless a default is configured elsewhere.
+
+columns:
+  "Project No":              job_number
+  "Project No.":             job_number
+  "Project Description / Address": name
+  "Priority":                priority
+  "Project Status":          status
+  "Action By":               action_by
+  "Next Action":             next_action
+  "Date Opened":             start_date
+  "Target Close":            target_end_date
+  "% Complete":              percent_complete
+  "Scope of Work":           scope
+  "Company / Client":        _client_company
+  "Contact":                 _client_contact
+  "Contract Value ($)":      contract_value
+  "Amount Paid ($)":         amount_paid
+  "Outstanding Balance ($)": outstanding_balance
+  "COGS":                    cogs
+  "Profit":                  profit
+  "Folder":                  folder_path
+  "Notes":                   notes
+
+# Status values in the legacy sheet → platform enum.
+# Keys are lowercased, stripped of emoji/non-ASCII before matching.
+status_map:
+  "active":          active
+  "on hold":         on_hold
+  "on_hold":         on_hold
+  "completed":       completed
+  "complete":        completed
+  "prospect":        prospect
+  "archived":        archived
+  "archive":         archived
+  "closed":          completed
+  "drafting":        drafting
+  "ahj/permitting":  ahj_permitting
+  "ahj_permitting":  ahj_permitting
+  "permitting":      ahj_permitting
+  "inspection":      inspection
+  "revisions":       revisions
+  "cancelled":       cancelled
+  "canceled":        cancelled
+
+# Priority values in the legacy sheet → platform enum.
+# "On Hold" is a status not a priority; map to "normal".
+# "Medium" maps to "normal" (platform uses low/normal/high/urgent).
+priority_map:
+  "low":     low
+  "medium":  normal
+  "normal":  normal
+  "high":    high
+  "urgent":  urgent
+  "on hold": normal
+
+# Header row index (1-based). Defaults to 1 if not specified.
+header_row: 3
+
+# Data starts on the row after header_row by default.
+# Set explicitly if the sheet has blank rows between header and data.
+# data_start_row: 4

@@ -2,6 +2,9 @@
 
 All functions expect an ``sqlite3.Connection`` returned by ``db.ensure_db()``
 (i.e. with ``row_factory = sqlite3.Row`` and ``foreign_keys = ON``).
+
+Prefer derived/computed fields over mirrored status columns — compute at
+read time rather than duplicating state that can drift.
 """
 
 from __future__ import annotations
