@@ -1184,28 +1184,193 @@ def render_timeline_view(projects: Sequence) -> None:
 
 
 def render_calendar_view(projects: Sequence) -> None:
-    """Calendar view stub — fills in for subagent 6.
+    """FullCalendar-backed month / week / list view of projects by date.
 
-    Counts projects whose target_end_date falls in the current calendar
-    month so the placeholder still surfaces useful information.
+    Each project becomes 1-2 events:
+
+    * **Target close** — primary event on ``target_end_date``, colored by
+      status. Title is ``"{job_number} {name[:30]}"``.
+    * **Start date** — secondary event on ``start_date``, only rendered
+      when ``start_date`` is present AND differs from ``target_end_date``.
+      Title is prefixed with ``▶`` so the lead arrow conveys "this is a
+      start date." Same status color as the target event.
+
+    Projects with no dates at all are skipped and tallied in a footer
+    caption. Honors the page-level ``status_filter`` segmented control
+    plus a local ``Show archived`` checkbox (default off, mirroring the
+    Kanban / Timeline pattern).
+
+    Click an event -> sets ``ui:projects:focus`` to that project's id and
+    reruns; the 6-tab detail panel then renders below.
     """
-    st.info("Calendar view — coming up next.")
-    today = date.today()
-    due_this_month = 0
-    for proj in projects:
-        ted = proj["target_end_date"]
-        if not ted:
-            continue
-        try:
-            parsed = datetime.fromisoformat(ted).date()
-        except (ValueError, TypeError):
-            continue
-        if parsed.year == today.year and parsed.month == today.month:
-            due_this_month += 1
-    st.metric(
-        label=f"Target end dates in {today.strftime('%B %Y')}",
-        value=due_this_month,
+    import html as _html
+
+    from streamlit_calendar import calendar
+
+    # ------- Archived toggle (mirrors Kanban / Timeline) -------
+    show_archived = st.checkbox(
+        "Show archived",
+        value=False,
+        key="ui:projects:calendar_show_archived",
     )
+
+    if show_archived:
+        cal_projects = list(projects)
+    else:
+        cal_projects = [p for p in projects if p["status"] != "archived"]
+
+    # ------- Partition by date availability -------
+    no_dates: list = []
+    dated: list = []
+    for p in cal_projects:
+        sd = _parse_iso_date(p["start_date"])
+        ted = _parse_iso_date(p["target_end_date"])
+        if sd is None and ted is None:
+            no_dates.append(p)
+            continue
+        dated.append((p, sd, ted))
+
+    # Update the test hook to reflect what's actually rendered on the
+    # calendar (post status filter, post archived filter, post NULL filter).
+    st.session_state["ui:projects:_test_visible_ids"] = [
+        p["id"] for (p, _sd, _ted) in dated
+    ]
+
+    if not dated:
+        if cal_projects and all(
+            p["start_date"] is None and p["target_end_date"] is None
+            for p in cal_projects
+        ):
+            st.info("No projects with dates in this filter.")
+        else:
+            st.info("No projects to display.")
+        if no_dates:
+            st.caption(
+                f"{len(no_dates)} project(s) with no dates — not shown on Calendar"
+            )
+        return
+
+    # ------- Build events -------
+    events: list[dict] = []
+    for proj, sd, ted in dated:
+        pid = proj["id"]
+        status = proj["status"]
+        color = PROJECT_STATUS_COLORS.get(status, "#6c757d")
+        # Truncate the display name but pass the full name through extended
+        # props so a future hover-handler could surface it. ``html.escape``
+        # guards against ampersands / angle brackets in user-supplied data
+        # since FullCalendar renders titles as HTML by default.
+        full_name = proj["name"] or ""
+        short_name = full_name if len(full_name) <= 30 else full_name[:30]
+        safe_job = _html.escape(str(proj["job_number"]))
+        safe_name = _html.escape(short_name)
+
+        # Target close event — primary, full color.
+        if ted is not None:
+            events.append(
+                {
+                    "title": f"{safe_job} {safe_name}".strip(),
+                    "color": color,
+                    "start": ted.isoformat(),
+                    "allDay": True,
+                    "extendedProps": {
+                        "project_id": pid,
+                        "kind": "target_close",
+                    },
+                }
+            )
+
+        # Start date event — secondary, only if start differs from target.
+        if sd is not None and sd != ted:
+            events.append(
+                {
+                    "title": f"▶ {safe_job}",
+                    "color": color,
+                    "start": sd.isoformat(),
+                    "allDay": True,
+                    "display": "block",
+                    "extendedProps": {
+                        "project_id": pid,
+                        "kind": "start_date",
+                    },
+                }
+            )
+
+    # ------- Calendar options -------
+    options = {
+        "initialView": "dayGridMonth",
+        "headerToolbar": {
+            "left": "prev,next today",
+            "center": "title",
+            "right": "dayGridMonth,timeGridWeek,listMonth",
+        },
+        "height": 650,
+        "eventDisplay": "block",
+        "displayEventTime": False,
+        "navLinks": True,
+        "nowIndicator": True,
+    }
+
+    # ------- Render the calendar -------
+    # Pin the widget key so state persists across reruns; restrict
+    # callbacks to ``eventClick`` since we don't act on dateClick / select.
+    state = calendar(
+        events=events,
+        options=options,
+        callbacks=["eventClick"],
+        key="ui:projects:calendar_widget",
+    )
+
+    # ------- Click-to-open handling -------
+    # The streamlit-calendar return dict has the shape
+    # ``{"callback": "eventClick", "eventClick": {"event": {"title": ...,
+    # "extendedProps": {"project_id": 42, "kind": "..."}}}}`` per the
+    # FullCalendar event-click API. Defensive lookups guard against minor
+    # shape differences across versions.
+    clicked_pid: Optional[int] = None
+    if isinstance(state, dict) and state.get("callback") == "eventClick":
+        event_payload = state.get("eventClick") or {}
+        event_obj = event_payload.get("event") or {}
+        ext_props = event_obj.get("extendedProps") or {}
+        raw_pid = ext_props.get("project_id")
+        if raw_pid is not None:
+            try:
+                clicked_pid = int(raw_pid)
+            except (TypeError, ValueError):
+                clicked_pid = None
+
+    if clicked_pid is not None and clicked_pid != st.session_state.get(
+        "ui:projects:focus"
+    ):
+        st.session_state["ui:projects:focus"] = clicked_pid
+        st.rerun()
+
+    # ------- Tally projects with no dates -------
+    if no_dates:
+        st.caption(
+            f"{len(no_dates)} project(s) with no dates — not shown on Calendar"
+        )
+
+    # ------- Detail panel for the focused project -------
+    focus_pid = st.session_state.get("ui:projects:focus")
+    visible_ids = {p["id"] for (p, _sd, _ted) in dated}
+    if focus_pid is None or focus_pid not in visible_ids:
+        return
+
+    focus_proj = next(p for (p, _, _) in dated if p["id"] == focus_pid)
+    st.markdown("---")
+    header_label = f"{focus_proj['job_number']} — {focus_proj['name']}"
+    head_col1, head_col2 = st.columns([6, 1])
+    with head_col1:
+        st.subheader(header_label)
+    with head_col2:
+        if st.button(
+            "← Close",
+            key=f"close_detail_calendar_p{focus_pid}",
+        ):
+            st.session_state["ui:projects:focus"] = None
+            st.rerun()
+    _render_project_detail_tabs(focus_proj, tab_idx=3)
 
 
 # ---------------------------------------------------------------------------
