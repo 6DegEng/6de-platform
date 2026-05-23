@@ -37,6 +37,14 @@ from modules.calculator.bridge import (  # noqa: E402
 )
 from modules.documents.crud import list_documents  # noqa: E402
 from modules.documents.sharepoint import CATEGORIES  # noqa: E402
+from modules.projects.contacts import (  # noqa: E402
+    CONTACT_ROLE_LABELS,
+    CONTACT_ROLES,
+    create_project_contact,
+    delete_project_contact,
+    list_project_contacts,
+    update_project_contact,
+)
 from modules.projects.crud import (  # noqa: E402
     create_milestone,
     create_project,
@@ -48,6 +56,24 @@ from modules.projects.crud import (  # noqa: E402
     search_projects,
     update_milestone,
     update_project,
+)
+from modules.projects.notes import (  # noqa: E402
+    create_project_note,
+    delete_project_note,
+    list_project_notes,
+    update_project_note,
+)
+from modules.projects.updates import (  # noqa: E402
+    UPDATE_CATEGORIES,
+    UPDATE_CATEGORY_LABELS,
+    create_project_update,
+    delete_project_update,
+    list_project_updates,
+)
+from modules.projects.workflow import (  # noqa: E402
+    PRIORITY_COLORS,
+    PRIORITY_LABELS,
+    PRIORITY_VALUES,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
 from streamlit_app.components.activity_panel import render_activity_panel  # noqa: E402
@@ -256,7 +282,7 @@ st.session_state["ui:projects:_test_visible_ids"] = [p["id"] for p in visible_pr
 # View renderers
 # ---------------------------------------------------------------------------
 def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
-    """Render the 6-tab project detail UI WITHOUT an enclosing ``st.expander``.
+    """Render the 9-tab project detail UI WITHOUT an enclosing ``st.expander``.
 
     Used by:
       * ``_render_project_expander`` — wraps this in an expander (legacy
@@ -271,13 +297,19 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
     status_html = render_status_pill(proj["status"])
     (
         detail_tab,
-        edit_tab,
+        notes_tab,
+        contacts_tab,
+        updates_tab,
+        activity_tab,
         milestone_tab,
         calc_tab,
         docs_tab,
-        activity_tab,
+        edit_tab,
     ) = st.tabs(
-        ["Details", "Edit", "Milestones", "Calculations", "Documents", "Activity"]
+        [
+            "Details", "Notes", "Contacts", "Updates", "Activity",
+            "Milestones", "Calculations", "Documents", "Edit",
+        ]
     )
 
     # --- Details ---
@@ -292,6 +324,24 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
             )
             st.markdown(f"**Client:** {proj['client_name'] or '—'}")
             st.markdown(f"**Address:** {proj['address'] or '—'}")
+
+            # Priority pill
+            try:
+                priority = proj["priority"]
+            except (KeyError, IndexError):
+                priority = None
+            if priority:
+                pri_color = PRIORITY_COLORS.get(priority, "#6B7280")
+                pri_label = PRIORITY_LABELS.get(priority, priority)
+                st.markdown(
+                    f"**Priority:** <span style='background:{pri_color};color:#fff;"
+                    f"padding:2px 10px;border-radius:10px;font-size:0.85em;"
+                    f"font-weight:600;'>{pri_label}</span>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown("**Priority:** —")
+
         with d_col2:
             st.markdown(
                 f"**City:** {proj['city'] or '—'}  /  "
@@ -302,14 +352,66 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
             st.markdown(f"**Target End:** {proj['target_end_date'] or '—'}")
             st.markdown(f"**Actual End:** {proj['actual_end_date'] or '—'}")
             st.markdown(f"**Folder:** `{proj['folder_path'] or '—'}`")
+
+            # Action By / Next Action
+            try:
+                action_by = proj["action_by"]
+            except (KeyError, IndexError):
+                action_by = None
+            try:
+                next_action = proj["next_action"]
+            except (KeyError, IndexError):
+                next_action = None
+            st.markdown(f"**Action By:** {action_by or '—'}")
+            st.markdown(f"**Next Action:** {next_action or '—'}")
+
+        # Percent complete bar
+        try:
+            pct = proj["percent_complete"]
+        except (KeyError, IndexError):
+            pct = None
+        if pct is not None and pct > 0:
+            st.progress(pct / 100.0, text=f"{pct}% complete")
+
         if proj["scope"]:
             st.markdown(f"**Scope:** {proj['scope']}")
         if proj["notes"]:
             st.markdown(f"**Notes:** {proj['notes']}")
 
+    # --- Notes ---
+    with notes_tab:
+        _render_notes_tab(conn, pid, tab_idx)
+
+    # --- Contacts ---
+    with contacts_tab:
+        _render_contacts_tab(conn, pid, tab_idx)
+
+    # --- Updates ---
+    with updates_tab:
+        _render_updates_tab(conn, pid, tab_idx)
+
     # --- Edit ---
     with edit_tab:
         key_ns = f"t{tab_idx}_p{pid}"
+
+        # Read current values with defensive access for new columns
+        try:
+            cur_priority = proj["priority"] or ""
+        except (KeyError, IndexError):
+            cur_priority = ""
+        try:
+            cur_action_by = proj["action_by"] or ""
+        except (KeyError, IndexError):
+            cur_action_by = ""
+        try:
+            cur_next_action = proj["next_action"] or ""
+        except (KeyError, IndexError):
+            cur_next_action = ""
+        try:
+            cur_pct = proj["percent_complete"] or 0
+        except (KeyError, IndexError):
+            cur_pct = 0
+
         with st.form(f"edit_{key_ns}", clear_on_submit=False):
             e_col1, e_col2 = st.columns(2)
             with e_col1:
@@ -322,6 +424,17 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
                 )
                 e_scope = st.text_area(
                     "Scope", value=proj["scope"] or "", key=f"es_{key_ns}"
+                )
+                e_priority = st.selectbox(
+                    "Priority",
+                    [""] + list(PRIORITY_VALUES),
+                    index=(
+                        list(PRIORITY_VALUES).index(cur_priority) + 1
+                        if cur_priority in PRIORITY_VALUES
+                        else 0
+                    ),
+                    format_func=lambda v: PRIORITY_LABELS.get(v, "— None —") if v else "— None —",
+                    key=f"epr_{key_ns}",
                 )
             with e_col2:
                 e_status = st.selectbox(
@@ -350,6 +463,22 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
                     value=proj["actual_end_date"] or "",
                     key=f"eae_{key_ns}",
                 )
+                e_action_by = st.text_input(
+                    "Action By",
+                    value=cur_action_by,
+                    placeholder="e.g. 6DE, AHJ, Client",
+                    key=f"eab_{key_ns}",
+                )
+                e_next_action = st.text_input(
+                    "Next Action",
+                    value=cur_next_action,
+                    placeholder="e.g. Submit permit application",
+                    key=f"ena_{key_ns}",
+                )
+            e_pct = st.slider(
+                "% Complete", min_value=0, max_value=100,
+                value=int(cur_pct), key=f"epct_{key_ns}",
+            )
             e_notes = st.text_area(
                 "Notes", value=proj["notes"] or "", key=f"eno_{key_ns}"
             )
@@ -386,10 +515,22 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
                     updates["target_end_date"] = e_target.strip() or None
                 if e_actual.strip() != (proj["actual_end_date"] or ""):
                     updates["actual_end_date"] = e_actual.strip() or None
+                new_priority = e_priority or None
+                if new_priority != (cur_priority or None):
+                    updates["priority"] = new_priority
+                if e_action_by.strip() != cur_action_by:
+                    updates["action_by"] = e_action_by.strip() or None
+                if e_next_action.strip() != cur_next_action:
+                    updates["next_action"] = e_next_action.strip() or None
+                if e_pct != int(cur_pct):
+                    updates["percent_complete"] = e_pct
                 if updates:
-                    update_project(conn, pid, **updates)
-                    st.success("Project updated.")
-                    st.rerun()
+                    try:
+                        update_project(conn, pid, **updates)
+                        st.success("Project updated.")
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
                 else:
                     st.info("No changes detected.")
 
@@ -691,8 +832,289 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
         render_activity_panel(conn, pid, view_idx=tab_idx)
 
 
+def _render_notes_tab(conn, pid: int, tab_idx: int) -> None:
+    """Render the Notes tab: list existing notes, create/edit/delete."""
+    key_ns = f"t{tab_idx}_p{pid}"
+    notes = list_project_notes(conn, pid)
+
+    st.markdown(f"### Notes ({len(notes)})")
+
+    if not notes:
+        st.caption("No notes yet. Add one below.")
+
+    for note in notes:
+        nid = note["id"]
+        edit_key = f"note_editing_{nid}_{key_ns}"
+        is_editing = st.session_state.get(edit_key, False)
+
+        with st.container():
+            meta_col, btn_col = st.columns([5, 2])
+            with meta_col:
+                ts = note["created_at"] or ""
+                author = note["author"] or ""
+                st.caption(f"{ts}  —  {author}")
+            with btn_col:
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button(
+                        "Edit" if not is_editing else "Cancel",
+                        key=f"note_edit_btn_{nid}_{key_ns}",
+                    ):
+                        st.session_state[edit_key] = not is_editing
+                        st.rerun()
+                with b2:
+                    if st.button("Delete", key=f"note_del_{nid}_{key_ns}"):
+                        delete_project_note(conn, nid)
+                        st.rerun()
+
+            if is_editing:
+                with st.form(f"note_edit_form_{nid}_{key_ns}", clear_on_submit=False):
+                    edited = st.text_area(
+                        "Edit note",
+                        value=note["content"],
+                        key=f"note_edit_ta_{nid}_{key_ns}",
+                        label_visibility="collapsed",
+                    )
+                    if st.form_submit_button("Save"):
+                        if edited.strip():
+                            update_project_note(conn, nid, edited.strip())
+                            st.session_state[edit_key] = False
+                            st.rerun()
+            else:
+                st.markdown(note["content"])
+
+            st.markdown("---")
+
+    # Add note form
+    with st.form(f"add_note_{key_ns}", clear_on_submit=True):
+        new_content = st.text_area(
+            "New note",
+            placeholder="Add a note about this project...",
+            key=f"note_new_ta_{key_ns}",
+        )
+        if st.form_submit_button("Add Note"):
+            if new_content.strip():
+                create_project_note(conn, pid, new_content.strip())
+                st.rerun()
+            else:
+                st.error("Note content is required.")
+
+
+def _render_contacts_tab(conn, pid: int, tab_idx: int) -> None:
+    """Render the Contacts tab: list per-project stakeholders, add/edit/delete."""
+    key_ns = f"t{tab_idx}_p{pid}"
+    contacts = list_project_contacts(conn, pid)
+
+    st.markdown(f"### Contacts ({len(contacts)})")
+
+    if not contacts:
+        st.caption("No contacts yet. Add one below.")
+
+    for ct in contacts:
+        cid = ct["id"]
+        role_label = CONTACT_ROLE_LABELS.get(ct["role"], ct["role"])
+        edit_key = f"ct_editing_{cid}_{key_ns}"
+        is_editing = st.session_state.get(edit_key, False)
+
+        with st.container():
+            info_col, btn_col = st.columns([5, 2])
+            with info_col:
+                st.markdown(f"**{ct['name']}** — {role_label}")
+                details_parts = []
+                if ct["company"]:
+                    details_parts.append(ct["company"])
+                if ct["email"]:
+                    details_parts.append(ct["email"])
+                if ct["phone"]:
+                    details_parts.append(ct["phone"])
+                if details_parts:
+                    st.caption(" · ".join(details_parts))
+                if ct["notes"]:
+                    st.caption(ct["notes"])
+            with btn_col:
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button(
+                        "Edit" if not is_editing else "Cancel",
+                        key=f"ct_edit_btn_{cid}_{key_ns}",
+                    ):
+                        st.session_state[edit_key] = not is_editing
+                        st.rerun()
+                with b2:
+                    if st.button("Delete", key=f"ct_del_{cid}_{key_ns}"):
+                        delete_project_contact(conn, cid)
+                        st.rerun()
+
+            if is_editing:
+                with st.form(f"ct_edit_form_{cid}_{key_ns}", clear_on_submit=False):
+                    ec1, ec2 = st.columns(2)
+                    with ec1:
+                        e_ct_name = st.text_input(
+                            "Name", value=ct["name"],
+                            key=f"ct_en_{cid}_{key_ns}",
+                        )
+                        e_ct_role = st.selectbox(
+                            "Role", list(CONTACT_ROLES),
+                            index=CONTACT_ROLES.index(ct["role"]) if ct["role"] in CONTACT_ROLES else 6,
+                            format_func=lambda r: CONTACT_ROLE_LABELS.get(r, r),
+                            key=f"ct_er_{cid}_{key_ns}",
+                        )
+                        e_ct_company = st.text_input(
+                            "Company", value=ct["company"] or "",
+                            key=f"ct_eco_{cid}_{key_ns}",
+                        )
+                    with ec2:
+                        e_ct_email = st.text_input(
+                            "Email", value=ct["email"] or "",
+                            key=f"ct_ee_{cid}_{key_ns}",
+                        )
+                        e_ct_phone = st.text_input(
+                            "Phone", value=ct["phone"] or "",
+                            key=f"ct_ep_{cid}_{key_ns}",
+                        )
+                        e_ct_notes = st.text_input(
+                            "Notes", value=ct["notes"] or "",
+                            key=f"ct_eno_{cid}_{key_ns}",
+                        )
+                    if st.form_submit_button("Save Contact"):
+                        ct_updates = {}
+                        if e_ct_name.strip() != ct["name"]:
+                            ct_updates["name"] = e_ct_name.strip()
+                        if e_ct_role != ct["role"]:
+                            ct_updates["role"] = e_ct_role
+                        if e_ct_company.strip() != (ct["company"] or ""):
+                            ct_updates["company"] = e_ct_company.strip() or None
+                        if e_ct_email.strip() != (ct["email"] or ""):
+                            ct_updates["email"] = e_ct_email.strip() or None
+                        if e_ct_phone.strip() != (ct["phone"] or ""):
+                            ct_updates["phone"] = e_ct_phone.strip() or None
+                        if e_ct_notes.strip() != (ct["notes"] or ""):
+                            ct_updates["notes"] = e_ct_notes.strip() or None
+                        if ct_updates:
+                            update_project_contact(conn, cid, **ct_updates)
+                            st.session_state[edit_key] = False
+                            st.rerun()
+                        else:
+                            st.info("No changes.")
+
+            st.markdown("---")
+
+    # Add contact form
+    with st.form(f"add_ct_{key_ns}", clear_on_submit=True):
+        st.markdown("**Add Contact**")
+        ac1, ac2 = st.columns(2)
+        with ac1:
+            new_ct_name = st.text_input(
+                "Name *", placeholder="e.g. Jane Smith",
+                key=f"ct_new_name_{key_ns}",
+            )
+            new_ct_role = st.selectbox(
+                "Role", list(CONTACT_ROLES),
+                format_func=lambda r: CONTACT_ROLE_LABELS.get(r, r),
+                key=f"ct_new_role_{key_ns}",
+            )
+            new_ct_company = st.text_input(
+                "Company", key=f"ct_new_co_{key_ns}",
+            )
+        with ac2:
+            new_ct_email = st.text_input(
+                "Email", key=f"ct_new_email_{key_ns}",
+            )
+            new_ct_phone = st.text_input(
+                "Phone", key=f"ct_new_phone_{key_ns}",
+            )
+            new_ct_notes = st.text_input(
+                "Notes", key=f"ct_new_notes_{key_ns}",
+            )
+        if st.form_submit_button("Add Contact"):
+            if not new_ct_name.strip():
+                st.error("Contact name is required.")
+            else:
+                kwargs: dict = {}
+                if new_ct_email.strip():
+                    kwargs["email"] = new_ct_email.strip()
+                if new_ct_phone.strip():
+                    kwargs["phone"] = new_ct_phone.strip()
+                if new_ct_company.strip():
+                    kwargs["company"] = new_ct_company.strip()
+                if new_ct_notes.strip():
+                    kwargs["notes"] = new_ct_notes.strip()
+                create_project_contact(
+                    conn, pid, new_ct_name.strip(),
+                    role=new_ct_role, **kwargs,
+                )
+                st.rerun()
+
+
+def _render_updates_tab(conn, pid: int, tab_idx: int) -> None:
+    """Render the Updates tab: timestamped status feed with category filter."""
+    key_ns = f"t{tab_idx}_p{pid}"
+
+    # Category filter
+    cat_options = ["All"] + [UPDATE_CATEGORY_LABELS[c] for c in UPDATE_CATEGORIES]
+    cat_filter = st.selectbox(
+        "Filter by category",
+        cat_options,
+        key=f"upd_cat_filter_{key_ns}",
+        label_visibility="collapsed",
+    )
+    cat_enum = None
+    if cat_filter != "All":
+        for k, v in UPDATE_CATEGORY_LABELS.items():
+            if v == cat_filter:
+                cat_enum = k
+                break
+
+    updates = list_project_updates(conn, pid, category_filter=cat_enum)
+    st.markdown(f"### Updates ({len(updates)})")
+
+    if not updates:
+        st.caption("No updates yet. Add one below.")
+
+    for upd in updates:
+        uid = upd["id"]
+        cat_label = UPDATE_CATEGORY_LABELS.get(upd["category"], upd["category"])
+        ts = upd["created_at"] or ""
+        author = upd["author"] or ""
+
+        with st.container():
+            meta_col, btn_col = st.columns([5, 1])
+            with meta_col:
+                st.caption(f"`{ts}` · **{cat_label}** · {author}")
+            with btn_col:
+                if st.button("Delete", key=f"upd_del_{uid}_{key_ns}"):
+                    delete_project_update(conn, uid)
+                    st.rerun()
+            st.markdown(upd["content"])
+            st.markdown("---")
+
+    # Add update form
+    with st.form(f"add_upd_{key_ns}", clear_on_submit=True):
+        st.markdown("**Add Update**")
+        new_upd_cat = st.selectbox(
+            "Category",
+            list(UPDATE_CATEGORIES),
+            format_func=lambda c: UPDATE_CATEGORY_LABELS.get(c, c),
+            key=f"upd_new_cat_{key_ns}",
+        )
+        new_upd_content = st.text_area(
+            "Content",
+            placeholder="What happened on this project?",
+            key=f"upd_new_content_{key_ns}",
+        )
+        if st.form_submit_button("Post Update"):
+            if not new_upd_content.strip():
+                st.error("Update content is required.")
+            else:
+                create_project_update(
+                    conn, pid, new_upd_content.strip(),
+                    category=new_upd_cat,
+                )
+                st.rerun()
+
+
 def _render_project_expander(proj, tab_idx: int = 0) -> None:
-    """Render the 6-tab detail UI wrapped in an ``st.expander``.
+    """Render the 9-tab detail UI wrapped in an ``st.expander``.
 
     Kept for any view that wants the legacy per-row expander layout.
     The Table view no longer calls this — it uses the aggrid grid + a
@@ -719,9 +1141,10 @@ def render_table_view(projects: Sequence) -> None:
     save path (aggrid handles its own redraw).
 
     Clicking a row sets ``st.session_state['ui:projects:focus']`` to that
-    project's ID. The detail panel below the grid renders the 6-tab UI
-    (Details / Edit / Milestones / Calculations / Documents / Activity)
-    for that one project. ``← Close`` returns focus to None.
+    project's ID. The detail panel below the grid renders the 9-tab UI
+    (Details / Notes / Contacts / Updates / Activity / Milestones /
+    Calculations / Documents / Edit) for that one project.
+    ``← Close`` returns focus to None.
     """
     # Empty-state handling — mirrors the wording the existing tests don't
     # assert against, so we have room to phrase it nicely.

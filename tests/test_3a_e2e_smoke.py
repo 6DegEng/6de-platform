@@ -12,8 +12,8 @@ Coverage:
   - Switching to ``"Timeline"`` does not raise (Plotly import included).
   - Switching to ``"Calendar"`` does not raise (placeholder still renders).
   - Toggling ``ui:projects:focus`` to a real pid renders the detail
-    panel with all 6 tabs (Details / Edit / Milestones / Calculations /
-    Documents / Activity).
+    panel with all 9 tabs (Details / Notes / Contacts / Updates /
+    Activity / Milestones / Calculations / Documents / Edit).
 
 The Phase B search-form regression (``form_id != ""`` and label
 ``"Search projects"``) is already covered by
@@ -151,8 +151,8 @@ def test_switch_to_calendar_does_not_crash(projects_page):
 # ---------------------------------------------------------------------------
 # Detail panel — 6 tabs, focus binding
 # ---------------------------------------------------------------------------
-def test_detail_panel_renders_six_tabs_when_focused(projects_page):
-    """Setting ``ui:projects:focus`` to a real pid renders all 6 detail tabs."""
+def test_detail_panel_renders_nine_tabs_when_focused(projects_page):
+    """Setting ``ui:projects:focus`` to a real pid renders all 9 detail tabs."""
     at = projects_page.run(timeout=30)
     assert not at.exception
 
@@ -165,23 +165,21 @@ def test_detail_panel_renders_six_tabs_when_focused(projects_page):
     assert not at.exception, f"Detail render raised: {at.exception}"
     assert at.session_state["ui:projects:focus"] == focus_pid
 
-    # AppTest exposes individual ``Tab`` objects (one per labeled tab)
-    # via ``at.tabs``; each has a ``.label`` attribute. The Table view's
-    # detail panel calls ``st.tabs(["Details", "Edit", "Milestones",
-    # "Calculations", "Documents", "Activity"])`` for the focused
-    # project — assert every one of those labels is present.
     tab_labels = [t.label for t in at.tabs]
     detail_labels = {
         "Details",
-        "Edit",
+        "Notes",
+        "Contacts",
+        "Updates",
+        "Activity",
         "Milestones",
         "Calculations",
         "Documents",
-        "Activity",
+        "Edit",
     }
     missing = detail_labels - set(tab_labels)
     assert not missing, (
-        f"Expected the 6 detail-panel tabs to render; missing {missing}. "
+        f"Expected the 9 detail-panel tabs to render; missing {missing}. "
         f"Saw tabs: {tab_labels}"
     )
 
