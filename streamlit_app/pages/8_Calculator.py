@@ -18,6 +18,16 @@ from modules.calculator.bridge import (
     read_calc_projects,
 )
 from modules.calculator.required_checks import REQUIRED_CHECKS, seed_required_checks
+from modules.calculator.single_ply_attachment import (
+    BuildingInfo,
+    CalcInputs,
+    ProductApproval,
+    ProjectInfo,
+    WindInputs,
+    ZoneSpacing,
+    calculate as run_single_ply_calc,
+    render_text_memo as render_single_ply_memo,
+)
 from modules.projects.crud import list_projects
 from streamlit_app.auth import require_auth
 
@@ -31,8 +41,8 @@ calc_conn = get_calc_connection()
 # ------------------------------------------------------------------
 # Top-level tabs
 # ------------------------------------------------------------------
-tab_calc, tab_auditor, tab_checks = st.tabs(
-    ["Calculators", "Package Auditor", "Required-Checks Library"]
+tab_calc, tab_auditor, tab_checks, tab_native = st.tabs(
+    ["Calculators", "Package Auditor", "Required-Checks Library", "Native Calculators"]
 )
 
 # ==================================================================
@@ -448,6 +458,17 @@ with tab_checks:
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Failed to add check: {exc}")
+
+
+# ==================================================================
+# Tab 4: Native Calculators (in-platform engineering calcs)
+# ==================================================================
+with tab_native:
+    from streamlit_app.components.single_ply_panel import (
+        render_single_ply_attachment_panel,
+    )
+    render_single_ply_attachment_panel()
+
 
 if calc_conn is not None:
     calc_conn.close()
