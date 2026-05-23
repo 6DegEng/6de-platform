@@ -2,6 +2,11 @@
 
 Full project management page: list, create, edit, search, milestones,
 calculator integration, and per-status filtering.
+
+Session 3a introduces a four-view switcher (Table / Kanban / Timeline /
+Calendar). This subagent lands the scaffold wiring only — Table view
+reuses the existing per-project expander rendering as a stub; the other
+three views are placeholders for subagents 4-6 to fill in.
 """
 
 from __future__ import annotations
@@ -10,6 +15,7 @@ import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from typing import Optional, Sequence
 
 import streamlit as st
 
@@ -43,6 +49,11 @@ from modules.projects.crud import (  # noqa: E402
     update_project,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
+from streamlit_app.components.status_pills import (  # noqa: E402
+    PROJECT_STATUS_LABELS,
+    PROJECT_STATUSES,
+    render_status_pill,
+)
 
 # ---------------------------------------------------------------------------
 # Page configuration
@@ -54,24 +65,18 @@ st.title("Projects")
 conn = ensure_db()
 
 # ---------------------------------------------------------------------------
-# Status styling helpers
+# Session-state defaults — initialize BEFORE any UI renders so reruns see them.
+# Persistent `ui:projects:*` namespace shared across the 4 views.
 # ---------------------------------------------------------------------------
-_STATUS_COLORS = {
-    "active": "green",
-    "prospect": "orange",
-    "completed": "gray",
-    "on_hold": "red",
-    "archived": "violet",
-}
+st.session_state.setdefault("ui:projects:view", "Table")
+st.session_state.setdefault("ui:projects:focus", None)
+st.session_state.setdefault("ui:projects:status_filter", None)
+st.session_state.setdefault("ui:projects:expanded", set())
+st.session_state.setdefault("ui:projects:_test_visible_ids", [])
 
-_STATUS_ICONS = {
-    "active": "🟢",
-    "prospect": "🟡",
-    "completed": "⚪",
-    "on_hold": "🔴",
-    "archived": "🟣",
-}
-
+# ---------------------------------------------------------------------------
+# Milestone icon styling (kept page-local; not part of the status_pills module)
+# ---------------------------------------------------------------------------
 _MILESTONE_ICONS = {
     "pending": "⬜",
     "in_progress": "🔵",
@@ -80,9 +85,14 @@ _MILESTONE_ICONS = {
 }
 
 
-def _status_badge(status: str) -> str:
-    icon = _STATUS_ICONS.get(status, "")
-    return f"{icon} {status.replace('_', ' ').title()}"
+def open_project(pid: int) -> None:
+    """Flip the shared focus slot so the detail panel binds to this project.
+
+    Subagents 4-6 (table / kanban / timeline / calendar view authors) wire
+    their row / card / bar click handlers to this helper. This subagent
+    only sets up the slot — no callers in scaffolding code yet.
+    """
+    st.session_state["ui:projects:focus"] = pid
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +128,7 @@ with st.expander("Create New Project", expanded=False):
             )
             cp_status = st.selectbox(
                 "Status",
-                ["active", "prospect", "on_hold", "completed", "archived"],
+                list(PROJECT_STATUSES),
                 index=0,
             )
             cp_county = st.text_input("County", value="Miami-Dade")
@@ -161,6 +171,10 @@ with st.expander("Create New Project", expanded=False):
 # A bare st.text_input shows the browser focus indicator on Enter but doesn't
 # reliably trigger a rerun across all Streamlit versions; the form wrapper
 # binds Enter to form_submit_button, guaranteeing commit.
+#
+# Phase B regression test (tests/test_projects_search.py) asserts the label
+# is exactly "Search projects" and form_id is non-empty — do NOT relocate
+# or rename without updating that test.
 # ---------------------------------------------------------------------------
 with st.form("project_search_form", clear_on_submit=False, border=False):
     sf_col1, sf_col2 = st.columns([10, 1])
@@ -175,454 +189,592 @@ with st.form("project_search_form", clear_on_submit=False, border=False):
         st.form_submit_button("Search")
 
 # ---------------------------------------------------------------------------
-# Status filter tabs
+# View switcher + status filter
 # ---------------------------------------------------------------------------
-tab_labels = ["All", "Active", "Prospect", "On Hold", "Completed", "Archived"]
-tabs = st.tabs(tab_labels)
+view_col, filter_col = st.columns([2, 5])
 
-_TAB_STATUS_MAP: dict[int, str | None] = {
-    0: None,
-    1: "active",
-    2: "prospect",
-    3: "on_hold",
-    4: "completed",
-    5: "archived",
-}
+with view_col:
+    st.radio(
+        "View",
+        options=["Table", "Kanban", "Timeline", "Calendar"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="ui:projects:view",
+    )
 
-for tab_idx, tab in enumerate(tabs):
-    with tab:
-        status_filter = _TAB_STATUS_MAP[tab_idx]
+with filter_col:
+    # Status filter — single segmented control replaces the old 6-tab strip.
+    # "All" maps to None; each named status maps to its enum value.
+    _filter_options = ["All"] + [PROJECT_STATUS_LABELS[s] for s in PROJECT_STATUSES]
+    _current = st.session_state["ui:projects:status_filter"]
+    _current_label = (
+        "All" if _current is None else PROJECT_STATUS_LABELS.get(_current, "All")
+    )
+    selected_label = st.segmented_control(
+        "Status filter",
+        options=_filter_options,
+        default=_current_label,
+        label_visibility="collapsed",
+        key="ui:projects:status_filter_widget",
+    )
+    if selected_label is None or selected_label == "All":
+        st.session_state["ui:projects:status_filter"] = None
+    else:
+        # Reverse-lookup label -> enum value.
+        for _enum, _lbl in PROJECT_STATUS_LABELS.items():
+            if _lbl == selected_label:
+                st.session_state["ui:projects:status_filter"] = _enum
+                break
 
-        # Fetch projects
-        if search_query.strip():
-            all_results = search_projects(conn, search_query.strip())
-            if status_filter:
-                projects = [p for p in all_results if p["status"] == status_filter]
-            else:
-                projects = all_results
-        else:
-            projects = list_projects(conn, status_filter=status_filter)
+status_filter: Optional[str] = st.session_state["ui:projects:status_filter"]
 
-        if not projects:
-            st.info("No projects found." if search_query else "No projects in this category.")
-            continue
+# ---------------------------------------------------------------------------
+# Fetch projects ONCE per render at the top of the page (was 6x — one per
+# status tab). Each view then filters this list in memory by the active
+# status filter.
+# ---------------------------------------------------------------------------
+if search_query.strip():
+    all_projects = search_projects(conn, search_query.strip())
+else:
+    all_projects = list_projects(conn)
 
-        # ----- Project cards -----
-        for proj in projects:
-            pid = proj["id"]
-            badge = _status_badge(proj["status"])
-            header = f"{proj['job_number']} — {proj['name']}"
-            if proj["client_name"]:
-                header += f"  |  {proj['client_name']}"
+visible_projects = [
+    p for p in all_projects if status_filter is None or p["status"] == status_filter
+]
 
-            with st.expander(f"{badge}  **{header}**"):
-                # ---- Detail / edit section ----
-                detail_tab, edit_tab, milestone_tab, calc_tab, docs_tab = st.tabs(
-                    ["Details", "Edit", "Milestones", "Calculations", "Documents"]
+# Test hook — populated BEFORE rendering so even a render error leaves the
+# session_state slot set to the would-be-visible list. Read by the 3
+# AppTest tests in tests/test_projects_search.py.
+st.session_state["ui:projects:_test_visible_ids"] = [p["id"] for p in visible_projects]
+
+
+# ---------------------------------------------------------------------------
+# View renderers
+# ---------------------------------------------------------------------------
+def _render_project_expander(proj, tab_idx: int = 0) -> None:
+    """Render the existing 5-tab detail UI for a single project inside an expander.
+
+    Extracted from the original L211-628 inner loop so the Table view stub can
+    reuse it verbatim. Subagent 4 replaces this with an aggrid grid.
+
+    The per-row widget keys MUST stay namespaced by ``t{tab_idx}_p{pid}``
+    (see tests/test_smoke.py:test_no_duplicate_widget_keys_in_projects_page).
+    The tab_idx parameter is retained so future view callers can pass their
+    own namespace prefix.
+    """
+    pid = proj["id"]
+    status_html = render_status_pill(proj["status"])
+    status_label = PROJECT_STATUS_LABELS.get(
+        proj["status"], proj["status"].replace("_", " ").title()
+    )
+    header = f"{proj['job_number']} — {proj['name']}"
+    if proj["client_name"]:
+        header += f"  |  {proj['client_name']}"
+
+    with st.expander(f"[{status_label}]  **{header}**"):
+        # ---- Detail / edit section ----
+        detail_tab, edit_tab, milestone_tab, calc_tab, docs_tab = st.tabs(
+            ["Details", "Edit", "Milestones", "Calculations", "Documents"]
+        )
+
+        # --- Details ---
+        with detail_tab:
+            d_col1, d_col2 = st.columns(2)
+            with d_col1:
+                st.markdown(f"**Job Number:** {proj['job_number']}")
+                st.markdown(f"**Name:** {proj['name']}")
+                st.markdown(
+                    f"**Status:** {status_html}",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(f"**Client:** {proj['client_name'] or '—'}")
+                st.markdown(f"**Address:** {proj['address'] or '—'}")
+            with d_col2:
+                st.markdown(
+                    f"**City:** {proj['city'] or '—'}  /  "
+                    f"**County:** {proj['county'] or '—'}  /  "
+                    f"**State:** {proj['state'] or '—'}"
+                )
+                st.markdown(f"**Start Date:** {proj['start_date'] or '—'}")
+                st.markdown(f"**Target End:** {proj['target_end_date'] or '—'}")
+                st.markdown(f"**Actual End:** {proj['actual_end_date'] or '—'}")
+                st.markdown(f"**Folder:** `{proj['folder_path'] or '—'}`")
+            if proj["scope"]:
+                st.markdown(f"**Scope:** {proj['scope']}")
+            if proj["notes"]:
+                st.markdown(f"**Notes:** {proj['notes']}")
+
+        # --- Edit ---
+        with edit_tab:
+            key_ns = f"t{tab_idx}_p{pid}"
+            with st.form(f"edit_{key_ns}", clear_on_submit=False):
+                e_col1, e_col2 = st.columns(2)
+                with e_col1:
+                    e_name = st.text_input("Name", value=proj["name"], key=f"en_{key_ns}")
+                    e_address = st.text_input(
+                        "Address", value=proj["address"] or "", key=f"ea_{key_ns}"
+                    )
+                    e_city = st.text_input(
+                        "City", value=proj["city"] or "Miami", key=f"ec_{key_ns}"
+                    )
+                    e_scope = st.text_area(
+                        "Scope", value=proj["scope"] or "", key=f"es_{key_ns}"
+                    )
+                with e_col2:
+                    e_status = st.selectbox(
+                        "Status",
+                        list(PROJECT_STATUSES),
+                        index=PROJECT_STATUSES.index(proj["status"]),
+                        key=f"est_{key_ns}",
+                    )
+                    e_county = st.text_input(
+                        "County",
+                        value=proj["county"] or "Miami-Dade",
+                        key=f"eco_{key_ns}",
+                    )
+                    e_start = st.text_input(
+                        "Start Date (YYYY-MM-DD)",
+                        value=proj["start_date"] or "",
+                        key=f"esd_{key_ns}",
+                    )
+                    e_target = st.text_input(
+                        "Target End Date (YYYY-MM-DD)",
+                        value=proj["target_end_date"] or "",
+                        key=f"ete_{key_ns}",
+                    )
+                    e_actual = st.text_input(
+                        "Actual End Date (YYYY-MM-DD)",
+                        value=proj["actual_end_date"] or "",
+                        key=f"eae_{key_ns}",
+                    )
+                e_notes = st.text_area(
+                    "Notes", value=proj["notes"] or "", key=f"eno_{key_ns}"
                 )
 
-                # --- Details ---
-                with detail_tab:
-                    d_col1, d_col2 = st.columns(2)
-                    with d_col1:
-                        st.markdown(f"**Job Number:** {proj['job_number']}")
-                        st.markdown(f"**Name:** {proj['name']}")
-                        st.markdown(f"**Status:** {badge}")
-                        st.markdown(f"**Client:** {proj['client_name'] or '—'}")
-                        st.markdown(f"**Address:** {proj['address'] or '—'}")
-                    with d_col2:
+                save_col, delete_col = st.columns([3, 1])
+                with save_col:
+                    save_clicked = st.form_submit_button(
+                        "Save Changes", type="primary"
+                    )
+                with delete_col:
+                    delete_clicked = st.form_submit_button(
+                        "Delete Project"
+                    )
+
+                if save_clicked:
+                    updates: dict = {}
+                    if e_name.strip() and e_name.strip() != proj["name"]:
+                        updates["name"] = e_name.strip()
+                    if e_status != proj["status"]:
+                        updates["status"] = e_status
+                    if e_address.strip() != (proj["address"] or ""):
+                        updates["address"] = e_address.strip()
+                    if e_city.strip() != (proj["city"] or ""):
+                        updates["city"] = e_city.strip()
+                    if e_county.strip() != (proj["county"] or ""):
+                        updates["county"] = e_county.strip()
+                    if e_scope.strip() != (proj["scope"] or ""):
+                        updates["scope"] = e_scope.strip()
+                    if e_notes.strip() != (proj["notes"] or ""):
+                        updates["notes"] = e_notes.strip()
+                    if e_start.strip() != (proj["start_date"] or ""):
+                        updates["start_date"] = e_start.strip() or None
+                    if e_target.strip() != (proj["target_end_date"] or ""):
+                        updates["target_end_date"] = e_target.strip() or None
+                    if e_actual.strip() != (proj["actual_end_date"] or ""):
+                        updates["actual_end_date"] = e_actual.strip() or None
+                    if updates:
+                        update_project(conn, pid, **updates)
+                        st.success("Project updated.")
+                        st.rerun()
+                    else:
+                        st.info("No changes detected.")
+
+                if delete_clicked:
+                    st.session_state[f"confirm_delete_{pid}"] = True
+
+            # Confirmation outside the form
+            if st.session_state.get(f"confirm_delete_{pid}", False):
+                st.warning(
+                    f"Are you sure you want to delete **{proj['name']}** "
+                    f"({proj['job_number']})? This cannot be undone."
+                )
+                c1, c2, _ = st.columns([1, 1, 3])
+                with c1:
+                    if st.button("Yes, delete", key=f"del_yes_{key_ns}", type="primary"):
+                        delete_project(conn, pid)
+                        st.session_state.pop(f"confirm_delete_{pid}", None)
+                        st.success("Project deleted.")
+                        st.rerun()
+                with c2:
+                    if st.button("Cancel", key=f"del_no_{key_ns}"):
+                        st.session_state.pop(f"confirm_delete_{pid}", None)
+                        st.rerun()
+
+        # --- Milestones ---
+        with milestone_tab:
+            milestones = list_milestones(conn, pid)
+
+            if milestones:
+                for ms in milestones:
+                    ms_id = ms["id"]
+                    icon = _MILESTONE_ICONS.get(ms["status"], "")
+                    due = f" — due {ms['due_date']}" if ms["due_date"] else ""
+                    completed_info = ""
+                    if ms["completed_date"]:
+                        completed_info = f"  (completed {ms['completed_date']})"
+
+                    ms_col1, ms_col2, ms_col3 = st.columns([5, 2, 2])
+                    with ms_col1:
                         st.markdown(
-                            f"**City:** {proj['city'] or '—'}  /  "
-                            f"**County:** {proj['county'] or '—'}  /  "
-                            f"**State:** {proj['state'] or '—'}"
+                            f"{icon} **{ms['name']}**{due}{completed_info}"
                         )
-                        st.markdown(f"**Start Date:** {proj['start_date'] or '—'}")
-                        st.markdown(f"**Target End:** {proj['target_end_date'] or '—'}")
-                        st.markdown(f"**Actual End:** {proj['actual_end_date'] or '—'}")
-                        st.markdown(f"**Folder:** `{proj['folder_path'] or '—'}`")
-                    if proj["scope"]:
-                        st.markdown(f"**Scope:** {proj['scope']}")
-                    if proj["notes"]:
-                        st.markdown(f"**Notes:** {proj['notes']}")
-
-                # --- Edit ---
-                with edit_tab:
-                    key_ns = f"t{tab_idx}_p{pid}"
-                    with st.form(f"edit_{key_ns}", clear_on_submit=False):
-                        e_col1, e_col2 = st.columns(2)
-                        with e_col1:
-                            e_name = st.text_input("Name", value=proj["name"], key=f"en_{key_ns}")
-                            e_address = st.text_input(
-                                "Address", value=proj["address"] or "", key=f"ea_{key_ns}"
-                            )
-                            e_city = st.text_input(
-                                "City", value=proj["city"] or "Miami", key=f"ec_{key_ns}"
-                            )
-                            e_scope = st.text_area(
-                                "Scope", value=proj["scope"] or "", key=f"es_{key_ns}"
-                            )
-                        with e_col2:
-                            current_statuses = [
-                                "active", "prospect", "on_hold", "completed", "archived",
-                            ]
-                            e_status = st.selectbox(
-                                "Status",
-                                current_statuses,
-                                index=current_statuses.index(proj["status"]),
-                                key=f"est_{key_ns}",
-                            )
-                            e_county = st.text_input(
-                                "County",
-                                value=proj["county"] or "Miami-Dade",
-                                key=f"eco_{key_ns}",
-                            )
-                            e_start = st.text_input(
-                                "Start Date (YYYY-MM-DD)",
-                                value=proj["start_date"] or "",
-                                key=f"esd_{key_ns}",
-                            )
-                            e_target = st.text_input(
-                                "Target End Date (YYYY-MM-DD)",
-                                value=proj["target_end_date"] or "",
-                                key=f"ete_{key_ns}",
-                            )
-                            e_actual = st.text_input(
-                                "Actual End Date (YYYY-MM-DD)",
-                                value=proj["actual_end_date"] or "",
-                                key=f"eae_{key_ns}",
-                            )
-                        e_notes = st.text_area(
-                            "Notes", value=proj["notes"] or "", key=f"eno_{key_ns}"
-                        )
-
-                        save_col, delete_col = st.columns([3, 1])
-                        with save_col:
-                            save_clicked = st.form_submit_button(
-                                "Save Changes", type="primary"
-                            )
-                        with delete_col:
-                            delete_clicked = st.form_submit_button(
-                                "Delete Project"
-                            )
-
-                        if save_clicked:
-                            updates: dict = {}
-                            if e_name.strip() and e_name.strip() != proj["name"]:
-                                updates["name"] = e_name.strip()
-                            if e_status != proj["status"]:
-                                updates["status"] = e_status
-                            if e_address.strip() != (proj["address"] or ""):
-                                updates["address"] = e_address.strip()
-                            if e_city.strip() != (proj["city"] or ""):
-                                updates["city"] = e_city.strip()
-                            if e_county.strip() != (proj["county"] or ""):
-                                updates["county"] = e_county.strip()
-                            if e_scope.strip() != (proj["scope"] or ""):
-                                updates["scope"] = e_scope.strip()
-                            if e_notes.strip() != (proj["notes"] or ""):
-                                updates["notes"] = e_notes.strip()
-                            if e_start.strip() != (proj["start_date"] or ""):
-                                updates["start_date"] = e_start.strip() or None
-                            if e_target.strip() != (proj["target_end_date"] or ""):
-                                updates["target_end_date"] = e_target.strip() or None
-                            if e_actual.strip() != (proj["actual_end_date"] or ""):
-                                updates["actual_end_date"] = e_actual.strip() or None
-                            if updates:
-                                update_project(conn, pid, **updates)
-                                st.success("Project updated.")
-                                st.rerun()
-                            else:
-                                st.info("No changes detected.")
-
-                        if delete_clicked:
-                            st.session_state[f"confirm_delete_{pid}"] = True
-
-                    # Confirmation outside the form
-                    if st.session_state.get(f"confirm_delete_{pid}", False):
-                        st.warning(
-                            f"Are you sure you want to delete **{proj['name']}** "
-                            f"({proj['job_number']})? This cannot be undone."
-                        )
-                        c1, c2, _ = st.columns([1, 1, 3])
-                        with c1:
-                            if st.button("Yes, delete", key=f"del_yes_{key_ns}", type="primary"):
-                                delete_project(conn, pid)
-                                st.session_state.pop(f"confirm_delete_{pid}", None)
-                                st.success("Project deleted.")
-                                st.rerun()
-                        with c2:
-                            if st.button("Cancel", key=f"del_no_{key_ns}"):
-                                st.session_state.pop(f"confirm_delete_{pid}", None)
-                                st.rerun()
-
-                # --- Milestones ---
-                with milestone_tab:
-                    milestones = list_milestones(conn, pid)
-
-                    if milestones:
-                        for ms in milestones:
-                            ms_id = ms["id"]
-                            icon = _MILESTONE_ICONS.get(ms["status"], "")
-                            due = f" — due {ms['due_date']}" if ms["due_date"] else ""
-                            completed_info = ""
-                            if ms["completed_date"]:
-                                completed_info = f"  (completed {ms['completed_date']})"
-
-                            ms_col1, ms_col2, ms_col3 = st.columns([5, 2, 2])
-                            with ms_col1:
-                                st.markdown(
-                                    f"{icon} **{ms['name']}**{due}{completed_info}"
-                                )
-                            with ms_col2:
-                                if ms["status"] in ("pending", "in_progress"):
-                                    if st.button(
-                                        "Mark Complete",
-                                        key=f"ms_done_{ms_id}_{tab_idx}",
-                                    ):
-                                        update_milestone(
-                                            conn,
-                                            ms_id,
-                                            status="completed",
-                                            completed_date=date.today().isoformat(),
-                                        )
-                                        st.rerun()
-                                elif ms["status"] == "completed":
-                                    st.caption("Completed")
-                            with ms_col3:
-                                if ms["status"] in ("pending", "in_progress"):
-                                    new_status = (
-                                        "in_progress"
-                                        if ms["status"] == "pending"
-                                        else "pending"
-                                    )
-                                    label = (
-                                        "Start"
-                                        if ms["status"] == "pending"
-                                        else "Reset to Pending"
-                                    )
-                                    if st.button(
-                                        label,
-                                        key=f"ms_toggle_{ms_id}_{tab_idx}",
-                                    ):
-                                        update_milestone(
-                                            conn, ms_id, status=new_status
-                                        )
-                                        st.rerun()
-                    else:
-                        st.caption("No milestones yet.")
-
-                    # Add milestone form
-                    st.markdown("---")
-                    with st.form(f"add_ms_{pid}_{tab_idx}", clear_on_submit=True):
-                        ms_add_col1, ms_add_col2 = st.columns([3, 1])
-                        with ms_add_col1:
-                            ms_name = st.text_input(
-                                "Milestone name",
-                                placeholder="e.g. Submit permit application",
-                                key=f"msn_{pid}_{tab_idx}",
-                            )
-                        with ms_add_col2:
-                            ms_due = st.date_input(
-                                "Due date (optional)",
-                                value=None,
-                                key=f"msd_{pid}_{tab_idx}",
-                            )
-                        if st.form_submit_button("Add Milestone"):
-                            if not ms_name.strip():
-                                st.error("Milestone name is required.")
-                            else:
-                                create_milestone(
-                                    conn,
-                                    pid,
-                                    ms_name.strip(),
-                                    due_date=ms_due.isoformat() if ms_due else None,
-                                )
-                                st.success(f"Milestone added.")
-                                st.rerun()
-
-                # --- Calculations ---
-                with calc_tab:
-                    calc_conn = get_calc_connection()
-                    linked_calcs = get_linked_calcs(conn, pid)
-
-                    # -- Open in Calculator button --
-                    btn_col, info_col = st.columns([1, 3])
-                    with btn_col:
-                        if st.button(
-                            "Open in Calculator",
-                            key=f"open_calc_{pid}_{tab_idx}",
-                        ):
-                            try:
-                                if CALC_EXE_PATH.exists():
-                                    subprocess.Popen([str(CALC_EXE_PATH)])
-                                    st.toast("Calculator launched.", icon="🔢")
-                                else:
-                                    st.warning(
-                                        f"Calculator executable not found at "
-                                        f"`{CALC_EXE_PATH}`."
-                                    )
-                            except Exception as exc:
-                                st.error(f"Failed to launch calculator: {exc}")
-                    with info_col:
-                        if linked_calcs:
-                            st.caption(
-                                f"{len(linked_calcs)} linked calc "
-                                f"project{'s' if len(linked_calcs) != 1 else ''}"
-                            )
-
-                    if linked_calcs and calc_conn is not None:
-                        # -- Show outputs for each linked calc project --
-                        for lk in linked_calcs:
-                            calc_pid = lk["calc_project_id"]
-                            st.markdown(
-                                f"**Calc Project #{calc_pid}** "
-                                f"({lk['structure_type'] or 'unknown type'}) "
-                                f"— linked {lk['linked_at'] or '—'}"
-                            )
-
-                            outputs = get_calc_outputs(calc_conn, calc_pid)
-                            if outputs:
-                                for out in outputs:
-                                    if out.get("overall_pass") is True:
-                                        icon = "✅"
-                                        status_text = "PASS"
-                                    elif out.get("overall_pass") is False:
-                                        icon = "❌"
-                                        status_text = "FAIL"
-                                    else:
-                                        icon = "⏳"
-                                        status_text = "Pending"
-
-                                    ts_display = out.get("timestamp") or "—"
-                                    standards = (
-                                        ", ".join(out["standards_cited"])
-                                        if out["standards_cited"]
-                                        else "—"
-                                    )
-
-                                    st.markdown(
-                                        f"{icon} **{out['title']}** — "
-                                        f"{status_text} | "
-                                        f"{out['step_count']} steps | "
-                                        f"Standards: {standards} | "
-                                        f"Last run: {ts_display}"
-                                    )
-                            else:
-                                st.caption("No calculation outputs yet.")
-
-                            st.markdown("---")
-                    elif linked_calcs and calc_conn is None:
-                        st.warning(
-                            "Calculator database (common.db) not found. "
-                            "Run a calculation first to see outputs."
-                        )
-                    else:
-                        st.info("No calculator project linked yet.")
-
-                    # -- Link Calculator Project section --
-                    if calc_conn is not None:
-                        st.markdown("**Link Calculator Project**")
-                        calc_projects = read_calc_projects(calc_conn)
-                        if calc_projects:
-                            with st.form(
-                                f"link_calc_{pid}_{tab_idx}",
-                                clear_on_submit=True,
+                    with ms_col2:
+                        if ms["status"] in ("pending", "in_progress"):
+                            if st.button(
+                                "Mark Complete",
+                                key=f"ms_done_{ms_id}_{tab_idx}",
                             ):
-                                calc_options = {}
-                                for cp in calc_projects:
-                                    label = (
-                                        f"#{cp['project_id']} — "
-                                        f"{cp.get('project_name', 'Untitled')} "
-                                        f"({cp.get('structure_type', '?')})"
-                                    )
-                                    calc_options[label] = cp["project_id"]
-                                calc_sel = st.selectbox(
-                                    "Calculator Project",
-                                    list(calc_options.keys()),
-                                    key=f"calc_sel_{pid}_{tab_idx}",
+                                update_milestone(
+                                    conn,
+                                    ms_id,
+                                    status="completed",
+                                    completed_date=date.today().isoformat(),
                                 )
-                                if st.form_submit_button("Link Project"):
-                                    calc_id = calc_options[calc_sel]
-                                    link_calc_to_erp(
-                                        conn, pid, calc_id, calc_conn
-                                    )
-                                    st.success(
-                                        f"Linked calc #{calc_id} to this project."
-                                    )
-                                    st.rerun()
-                        else:
-                            st.caption(
-                                "No calculator projects found in common.db."
+                                st.rerun()
+                        elif ms["status"] == "completed":
+                            st.caption("Completed")
+                    with ms_col3:
+                        if ms["status"] in ("pending", "in_progress"):
+                            new_status = (
+                                "in_progress"
+                                if ms["status"] == "pending"
+                                else "pending"
                             )
-
-                    if calc_conn is not None:
-                        calc_conn.close()
-
-                # --- Documents (Phase 2 — SharePoint document layer) ---
-                with docs_tab:
-                    docs = list_documents(conn, entity_type="project", entity_id=pid)
-                    sharepoint_configured = bool(MSGRAPH_CLIENT_ID and MSGRAPH_TENANT_ID)
-
-                    status_col, count_col = st.columns([3, 1])
-                    with status_col:
-                        if sharepoint_configured:
-                            st.caption("✅ SharePoint configured")
-                        else:
-                            st.caption(
-                                "⚙️ SharePoint not configured — set `MSGRAPH_CLIENT_ID` "
-                                "and `MSGRAPH_TENANT_ID` to enable uploads. "
-                                "Indexed files below still link to OneDrive."
+                            label = (
+                                "Start"
+                                if ms["status"] == "pending"
+                                else "Reset to Pending"
                             )
-                    with count_col:
-                        st.metric("Documents", len(docs))
+                            if st.button(
+                                label,
+                                key=f"ms_toggle_{ms_id}_{tab_idx}",
+                            ):
+                                update_milestone(
+                                    conn, ms_id, status=new_status
+                                )
+                                st.rerun()
+            else:
+                st.caption("No milestones yet.")
 
-                    if not docs:
-                        st.info(
-                            "No documents indexed yet. Run "
-                            "`python scripts/scan_existing_project_docs.py --commit "
-                            f"--job {proj['job_number']}` to backfill from OneDrive."
-                        )
+            # Add milestone form
+            st.markdown("---")
+            with st.form(f"add_ms_{pid}_{tab_idx}", clear_on_submit=True):
+                ms_add_col1, ms_add_col2 = st.columns([3, 1])
+                with ms_add_col1:
+                    ms_name = st.text_input(
+                        "Milestone name",
+                        placeholder="e.g. Submit permit application",
+                        key=f"msn_{pid}_{tab_idx}",
+                    )
+                with ms_add_col2:
+                    ms_due = st.date_input(
+                        "Due date (optional)",
+                        value=None,
+                        key=f"msd_{pid}_{tab_idx}",
+                    )
+                if st.form_submit_button("Add Milestone"):
+                    if not ms_name.strip():
+                        st.error("Milestone name is required.")
                     else:
-                        # Group by category. Category lives in notes JSON (backfilled)
-                        # or is derivable from file_path's penultimate segment.
-                        import json as _json
-                        grouped: dict[str, list] = {c: [] for c in CATEGORIES}
-                        ungrouped: list = []
-                        for doc in docs:
-                            category = None
-                            if doc["notes"]:
-                                try:
-                                    meta = _json.loads(doc["notes"])
-                                    category = meta.get("category")
-                                except (ValueError, TypeError):
-                                    pass
-                            if not category and doc["file_path"]:
-                                # Derive from path: .../{NUM}_{NAME}/{CATEGORY}/file
-                                parts = doc["file_path"].split("/")
-                                if len(parts) >= 2 and parts[-2] in CATEGORIES:
-                                    category = parts[-2]
-                            if category in CATEGORIES:
-                                grouped[category].append(doc)
-                            else:
-                                ungrouped.append(doc)
+                        create_milestone(
+                            conn,
+                            pid,
+                            ms_name.strip(),
+                            due_date=ms_due.isoformat() if ms_due else None,
+                        )
+                        st.success(f"Milestone added.")
+                        st.rerun()
 
-                        for category in CATEGORIES:
-                            items = grouped[category]
-                            if not items:
-                                continue
-                            st.markdown(f"**{category}** ({len(items)})")
-                            for doc in items:
-                                row_a, row_b = st.columns([5, 2])
-                                with row_a:
-                                    st.write(f"📄 {doc['file_name']}")
-                                with row_b:
-                                    if doc["sharepoint_web_url"]:
-                                        st.markdown(
-                                            f"[Open in SharePoint]({doc['sharepoint_web_url']})"
-                                        )
-                                    elif doc["file_path"]:
-                                        st.caption(f"`{doc['file_path']}`")
-                        if ungrouped:
-                            with st.expander(f"Uncategorized ({len(ungrouped)})"):
-                                for doc in ungrouped:
-                                    st.write(f"📄 {doc['file_name']}  —  `{doc['file_path']}`")
+        # --- Calculations ---
+        with calc_tab:
+            calc_conn = get_calc_connection()
+            linked_calcs = get_linked_calcs(conn, pid)
+
+            # -- Open in Calculator button --
+            btn_col, info_col = st.columns([1, 3])
+            with btn_col:
+                if st.button(
+                    "Open in Calculator",
+                    key=f"open_calc_{pid}_{tab_idx}",
+                ):
+                    try:
+                        if CALC_EXE_PATH.exists():
+                            subprocess.Popen([str(CALC_EXE_PATH)])
+                            st.toast("Calculator launched.", icon="🔢")
+                        else:
+                            st.warning(
+                                f"Calculator executable not found at "
+                                f"`{CALC_EXE_PATH}`."
+                            )
+                    except Exception as exc:
+                        st.error(f"Failed to launch calculator: {exc}")
+            with info_col:
+                if linked_calcs:
+                    st.caption(
+                        f"{len(linked_calcs)} linked calc "
+                        f"project{'s' if len(linked_calcs) != 1 else ''}"
+                    )
+
+            if linked_calcs and calc_conn is not None:
+                # -- Show outputs for each linked calc project --
+                for lk in linked_calcs:
+                    calc_pid = lk["calc_project_id"]
+                    st.markdown(
+                        f"**Calc Project #{calc_pid}** "
+                        f"({lk['structure_type'] or 'unknown type'}) "
+                        f"— linked {lk['linked_at'] or '—'}"
+                    )
+
+                    outputs = get_calc_outputs(calc_conn, calc_pid)
+                    if outputs:
+                        for out in outputs:
+                            if out.get("overall_pass") is True:
+                                icon = "✅"
+                                status_text = "PASS"
+                            elif out.get("overall_pass") is False:
+                                icon = "❌"
+                                status_text = "FAIL"
+                            else:
+                                icon = "⏳"
+                                status_text = "Pending"
+
+                            ts_display = out.get("timestamp") or "—"
+                            standards = (
+                                ", ".join(out["standards_cited"])
+                                if out["standards_cited"]
+                                else "—"
+                            )
+
+                            st.markdown(
+                                f"{icon} **{out['title']}** — "
+                                f"{status_text} | "
+                                f"{out['step_count']} steps | "
+                                f"Standards: {standards} | "
+                                f"Last run: {ts_display}"
+                            )
+                    else:
+                        st.caption("No calculation outputs yet.")
+
+                    st.markdown("---")
+            elif linked_calcs and calc_conn is None:
+                st.warning(
+                    "Calculator database (common.db) not found. "
+                    "Run a calculation first to see outputs."
+                )
+            else:
+                st.info("No calculator project linked yet.")
+
+            # -- Link Calculator Project section --
+            if calc_conn is not None:
+                st.markdown("**Link Calculator Project**")
+                calc_projects = read_calc_projects(calc_conn)
+                if calc_projects:
+                    with st.form(
+                        f"link_calc_{pid}_{tab_idx}",
+                        clear_on_submit=True,
+                    ):
+                        calc_options = {}
+                        for cp in calc_projects:
+                            label = (
+                                f"#{cp['project_id']} — "
+                                f"{cp.get('project_name', 'Untitled')} "
+                                f"({cp.get('structure_type', '?')})"
+                            )
+                            calc_options[label] = cp["project_id"]
+                        calc_sel = st.selectbox(
+                            "Calculator Project",
+                            list(calc_options.keys()),
+                            key=f"calc_sel_{pid}_{tab_idx}",
+                        )
+                        if st.form_submit_button("Link Project"):
+                            calc_id = calc_options[calc_sel]
+                            link_calc_to_erp(
+                                conn, pid, calc_id, calc_conn
+                            )
+                            st.success(
+                                f"Linked calc #{calc_id} to this project."
+                            )
+                            st.rerun()
+                else:
+                    st.caption(
+                        "No calculator projects found in common.db."
+                    )
+
+            if calc_conn is not None:
+                calc_conn.close()
+
+        # --- Documents (Phase 2 — SharePoint document layer) ---
+        with docs_tab:
+            docs = list_documents(conn, entity_type="project", entity_id=pid)
+            sharepoint_configured = bool(MSGRAPH_CLIENT_ID and MSGRAPH_TENANT_ID)
+
+            status_col, count_col = st.columns([3, 1])
+            with status_col:
+                if sharepoint_configured:
+                    st.caption("✅ SharePoint configured")
+                else:
+                    st.caption(
+                        "⚙️ SharePoint not configured — set `MSGRAPH_CLIENT_ID` "
+                        "and `MSGRAPH_TENANT_ID` to enable uploads. "
+                        "Indexed files below still link to OneDrive."
+                    )
+            with count_col:
+                st.metric("Documents", len(docs))
+
+            if not docs:
+                st.info(
+                    "No documents indexed yet. Run "
+                    "`python scripts/scan_existing_project_docs.py --commit "
+                    f"--job {proj['job_number']}` to backfill from OneDrive."
+                )
+            else:
+                # Group by category. Category lives in notes JSON (backfilled)
+                # or is derivable from file_path's penultimate segment.
+                import json as _json
+                grouped: dict[str, list] = {c: [] for c in CATEGORIES}
+                ungrouped: list = []
+                for doc in docs:
+                    category = None
+                    if doc["notes"]:
+                        try:
+                            meta = _json.loads(doc["notes"])
+                            category = meta.get("category")
+                        except (ValueError, TypeError):
+                            pass
+                    if not category and doc["file_path"]:
+                        # Derive from path: .../{NUM}_{NAME}/{CATEGORY}/file
+                        parts = doc["file_path"].split("/")
+                        if len(parts) >= 2 and parts[-2] in CATEGORIES:
+                            category = parts[-2]
+                    if category in CATEGORIES:
+                        grouped[category].append(doc)
+                    else:
+                        ungrouped.append(doc)
+
+                for category in CATEGORIES:
+                    items = grouped[category]
+                    if not items:
+                        continue
+                    st.markdown(f"**{category}** ({len(items)})")
+                    for doc in items:
+                        row_a, row_b = st.columns([5, 2])
+                        with row_a:
+                            st.write(f"📄 {doc['file_name']}")
+                        with row_b:
+                            if doc["sharepoint_web_url"]:
+                                st.markdown(
+                                    f"[Open in SharePoint]({doc['sharepoint_web_url']})"
+                                )
+                            elif doc["file_path"]:
+                                st.caption(f"`{doc['file_path']}`")
+                if ungrouped:
+                    with st.expander(f"Uncategorized ({len(ungrouped)})"):
+                        for doc in ungrouped:
+                            st.write(f"📄 {doc['file_name']}  —  `{doc['file_path']}`")
+
+
+def render_table_view(projects: Sequence) -> None:
+    """Table view stub — reuses the existing per-project expander rendering.
+
+    Subagent 4 replaces this with a ``streamlit-aggrid`` grid. Until then,
+    the existing 5-tab detail UI (Details / Edit / Milestones / Calculations
+    / Documents) keeps working for every visible row.
+    """
+    if not projects:
+        st.info(
+            "No projects found." if search_query.strip() else "No projects in this category."
+        )
+        return
+    for proj in projects:
+        _render_project_expander(proj, tab_idx=0)
+
+
+def render_kanban_view(projects: Sequence) -> None:
+    """Kanban view stub — fills in for subagent 5.
+
+    Shows per-status counts using the new palette so the colors can be
+    verified visually before the real board lands.
+    """
+    st.info("Kanban view — coming up next. Click cards to open project details.")
+    if not projects:
+        st.caption("No projects to summarize.")
+        return
+    counts: dict[str, int] = {s: 0 for s in PROJECT_STATUSES}
+    for p in projects:
+        if p["status"] in counts:
+            counts[p["status"]] += 1
+    summary_cols = st.columns(len(PROJECT_STATUSES))
+    for col, status in zip(summary_cols, PROJECT_STATUSES):
+        with col:
+            st.markdown(render_status_pill(status), unsafe_allow_html=True)
+            st.metric(label=PROJECT_STATUS_LABELS[status], value=counts[status])
+
+
+def render_timeline_view(projects: Sequence) -> None:
+    """Timeline view stub — fills in for subagent 5.
+
+    Lists each project's start_date -> target_end_date as plain text so the
+    underlying data is observable before the Gantt-style view lands.
+    """
+    st.info("Timeline view — coming up next.")
+    if not projects:
+        st.caption("No projects to plot.")
+        return
+    for proj in projects:
+        start = proj["start_date"] or "?"
+        end = proj["target_end_date"] or "?"
+        st.markdown(
+            f"- **{proj['job_number']} — {proj['name']}**  "
+            f"({start} → {end})"
+        )
+
+
+def render_calendar_view(projects: Sequence) -> None:
+    """Calendar view stub — fills in for subagent 6.
+
+    Counts projects whose target_end_date falls in the current calendar
+    month so the placeholder still surfaces useful information.
+    """
+    st.info("Calendar view — coming up next.")
+    today = date.today()
+    due_this_month = 0
+    for proj in projects:
+        ted = proj["target_end_date"]
+        if not ted:
+            continue
+        try:
+            parsed = datetime.fromisoformat(ted).date()
+        except (ValueError, TypeError):
+            continue
+        if parsed.year == today.year and parsed.month == today.month:
+            due_this_month += 1
+    st.metric(
+        label=f"Target end dates in {today.strftime('%B %Y')}",
+        value=due_this_month,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Branch on the selected view
+# ---------------------------------------------------------------------------
+view = st.session_state["ui:projects:view"]
+
+if view == "Kanban":
+    render_kanban_view(visible_projects)
+elif view == "Timeline":
+    render_timeline_view(visible_projects)
+elif view == "Calendar":
+    render_calendar_view(visible_projects)
+else:
+    render_table_view(visible_projects)

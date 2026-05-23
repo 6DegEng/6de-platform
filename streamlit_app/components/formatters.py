@@ -150,12 +150,13 @@ def empty_state(kind: str) -> str:
 
 
 _STATUS_COLORS: dict[str, dict[str, str]] = {
+    # Project palette aligned to the Session 3a UI uplift prompt (Monday-style).
     "project": {
-        "prospect":  "#6c757d",
-        "active":    "#198754",
-        "on_hold":   "#fd7e14",
-        "completed": "#0d6efd",
-        "archived":  "#adb5bd",
+        "active":    "#1FBA66",
+        "prospect":  "#F7B500",
+        "on_hold":   "#A85FFF",
+        "completed": "#9CA3AF",
+        "archived":  "#374151",
     },
     "invoice": {
         "draft":   "#6c757d",
