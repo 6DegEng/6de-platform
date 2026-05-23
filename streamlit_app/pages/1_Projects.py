@@ -50,6 +50,7 @@ from modules.projects.crud import (  # noqa: E402
     update_project,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
+from streamlit_app.components.activity_panel import render_activity_panel  # noqa: E402
 from streamlit_app.components.project_grid import render_project_grid  # noqa: E402
 from streamlit_app.components.status_pills import (  # noqa: E402
     PROJECT_STATUS_COLORS,
@@ -255,7 +256,7 @@ st.session_state["ui:projects:_test_visible_ids"] = [p["id"] for p in visible_pr
 # View renderers
 # ---------------------------------------------------------------------------
 def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
-    """Render the 5-tab project detail UI WITHOUT an enclosing ``st.expander``.
+    """Render the 6-tab project detail UI WITHOUT an enclosing ``st.expander``.
 
     Used by:
       * ``_render_project_expander`` — wraps this in an expander (legacy
@@ -268,8 +269,15 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
     """
     pid = proj["id"]
     status_html = render_status_pill(proj["status"])
-    detail_tab, edit_tab, milestone_tab, calc_tab, docs_tab = st.tabs(
-        ["Details", "Edit", "Milestones", "Calculations", "Documents"]
+    (
+        detail_tab,
+        edit_tab,
+        milestone_tab,
+        calc_tab,
+        docs_tab,
+        activity_tab,
+    ) = st.tabs(
+        ["Details", "Edit", "Milestones", "Calculations", "Documents", "Activity"]
     )
 
     # --- Details ---
@@ -678,9 +686,13 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
                     for doc in ungrouped:
                         st.write(f"📄 {doc['file_name']}  —  `{doc['file_path']}`")
 
+    # --- Activity (Session 3a — subagent 6) ---
+    with activity_tab:
+        render_activity_panel(conn, pid, view_idx=tab_idx)
+
 
 def _render_project_expander(proj, tab_idx: int = 0) -> None:
-    """Render the 5-tab detail UI wrapped in an ``st.expander``.
+    """Render the 6-tab detail UI wrapped in an ``st.expander``.
 
     Kept for any view that wants the legacy per-row expander layout.
     The Table view no longer calls this — it uses the aggrid grid + a
@@ -707,9 +719,9 @@ def render_table_view(projects: Sequence) -> None:
     save path (aggrid handles its own redraw).
 
     Clicking a row sets ``st.session_state['ui:projects:focus']`` to that
-    project's ID. The detail panel below the grid renders the 5-tab UI
-    (Details / Edit / Milestones / Calculations / Documents) for that
-    one project. ``← Close`` returns focus to None.
+    project's ID. The detail panel below the grid renders the 6-tab UI
+    (Details / Edit / Milestones / Calculations / Documents / Activity)
+    for that one project. ``← Close`` returns focus to None.
     """
     # Empty-state handling — mirrors the wording the existing tests don't
     # assert against, so we have room to phrase it nicely.
