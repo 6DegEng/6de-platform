@@ -52,6 +52,7 @@ from modules.projects.crud import (  # noqa: E402
 from streamlit_app.auth import require_auth  # noqa: E402
 from streamlit_app.components.project_grid import render_project_grid  # noqa: E402
 from streamlit_app.components.status_pills import (  # noqa: E402
+    PROJECT_STATUS_COLORS,
     PROJECT_STATUS_LABELS,
     PROJECT_STATUSES,
     render_status_pill,
@@ -773,8 +774,6 @@ def _render_kanban_card(proj, status: str) -> None:
     + light gray panel. A small selectbox + View button sit below the
     HTML block (Streamlit widgets cannot live inside a raw HTML span).
     """
-    from streamlit_app.components.status_pills import PROJECT_STATUS_COLORS
-
     pid = proj["id"]
     border_color = PROJECT_STATUS_COLORS.get(status, "#6c757d")
     name = proj["name"] or ""
@@ -932,23 +931,244 @@ def render_kanban_view(projects: Sequence) -> None:
     _render_project_detail_tabs(focus_proj, tab_idx=1)
 
 
-def render_timeline_view(projects: Sequence) -> None:
-    """Timeline view stub — fills in for subagent 5.
+def _parse_iso_date(value) -> Optional[date]:
+    """Parse an ISO date string (or pass through a date). None on failure."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except (ValueError, TypeError):
+        return None
 
-    Lists each project's start_date -> target_end_date as plain text so the
-    underlying data is observable before the Gantt-style view lands.
+
+def render_timeline_view(projects: Sequence) -> None:
+    """Plotly Gantt-style timeline of projects by start_date -> target_end_date.
+
+    Bars are colored by status. Sorted by start_date ascending; projects
+    with NULL start_date sort to the bottom. NULL-date handling:
+
+    * Both start_date and target_end_date NULL: project is not rendered.
+      A footer caption tallies the count.
+    * Only target_end_date present: rendered as a single point (a 1-day
+      bar centered on target_end_date) so the project still appears.
+    * Only start_date present: rendered as an open-ended bar from
+      start_date to today (datetime.now().date()) -- conveys "in progress
+      with no committed end" more clearly than an arbitrary 60-day stub.
+
+    Click-to-open is approximated via a below-chart selectbox; Plotly
+    click events under Streamlit are unreliable.
     """
-    st.info("Timeline view — coming up next.")
-    if not projects:
-        st.caption("No projects to plot.")
-        return
-    for proj in projects:
-        start = proj["start_date"] or "?"
-        end = proj["target_end_date"] or "?"
-        st.markdown(
-            f"- **{proj['job_number']} — {proj['name']}**  "
-            f"({start} → {end})"
+    import plotly.graph_objects as go
+
+    # ------- Archived toggle (mirrors Kanban) -------
+    show_archived = st.checkbox(
+        "Show archived",
+        value=False,
+        key="ui:projects:timeline_show_archived",
+    )
+
+    if show_archived:
+        timeline_projects = list(projects)
+    else:
+        timeline_projects = [p for p in projects if p["status"] != "archived"]
+
+    # ------- Partition by date availability -------
+    no_dates: list = []
+    plottable: list = []
+    today = datetime.now().date()
+    for p in timeline_projects:
+        sd = _parse_iso_date(p["start_date"])
+        ted = _parse_iso_date(p["target_end_date"])
+        if sd is None and ted is None:
+            no_dates.append(p)
+            continue
+        plottable.append((p, sd, ted))
+
+    # Sort: start_date asc; rows with no start_date (target_end only) sink.
+    plottable.sort(
+        key=lambda triple: (
+            triple[1] is None,
+            triple[1] or date.max,
+            triple[2] or date.max,
         )
+    )
+
+    # Update the test hook to reflect what's ACTUALLY rendered on the chart.
+    st.session_state["ui:projects:_test_visible_ids"] = [
+        p["id"] for (p, _sd, _ted) in plottable
+    ]
+
+    if not plottable:
+        st.info("No projects with dates to display.")
+        if no_dates:
+            st.caption(
+                f"{len(no_dates)} project(s) with no dates — not shown on Timeline"
+            )
+        return
+
+    # ------- Build the Plotly figure -------
+    # We draw one horizontal bar per project. Plotly's px.timeline is the
+    # idiomatic choice but pulls in pandas dependency; we use go.Bar with
+    # base + width in milliseconds for the same effect with finer control.
+    fig = go.Figure()
+
+    bar_y: list[str] = []
+    bar_base: list = []
+    bar_width: list = []  # in milliseconds for Plotly's date axis
+    bar_colors: list[str] = []
+    bar_hovertext: list[str] = []
+    bar_pids: list[int] = []
+    bar_labels: list[str] = []
+
+    one_day_ms = 24 * 60 * 60 * 1000
+
+    for proj, sd, ted in plottable:
+        # Compute effective start / end for this bar.
+        if sd is not None and ted is not None:
+            eff_start = sd
+            eff_end = ted
+        elif sd is not None and ted is None:
+            # Open-ended: bar runs from start_date to today.
+            eff_start = sd
+            eff_end = max(today, sd)
+        else:
+            # ted only -> single point (1-day bar centered on ted).
+            eff_start = ted
+            eff_end = ted
+
+        # Width in milliseconds; minimum 1 day so a single point is visible.
+        delta_days = max((eff_end - eff_start).days, 1)
+
+        bar_y.append(f"{proj['job_number']} — {(proj['name'] or '')[:30]}")
+        bar_base.append(datetime.combine(eff_start, datetime.min.time()))
+        bar_width.append(delta_days * one_day_ms)
+        bar_colors.append(
+            PROJECT_STATUS_COLORS.get(proj["status"], "#6c757d")
+        )
+        bar_pids.append(proj["id"])
+        bar_labels.append(f"{proj['job_number']} — {(proj['name'] or '')[:30]}")
+
+        # Hover: full name, client, status, % complete (if non-zero/non-null).
+        hover_lines = [
+            f"<b>{proj['name'] or '(no name)'}</b>",
+            f"Job: {proj['job_number']}",
+            f"Client: {proj['client_name'] or '—'}",
+            f"Status: {PROJECT_STATUS_LABELS.get(proj['status'], proj['status'])}",
+            f"Start: {sd or '—'}",
+            f"Target end: {ted or '—'}",
+        ]
+        # percent_complete is a Session 3b column; surface ONLY if non-null
+        # and non-zero per the spec.
+        try:
+            pct = proj["percent_complete"]
+        except (KeyError, IndexError):
+            pct = None
+        if pct is not None and pct != 0:
+            hover_lines.append(f"% complete: {pct}")
+        bar_hovertext.append("<br>".join(hover_lines))
+
+    fig.add_trace(
+        go.Bar(
+            x=bar_width,
+            y=bar_y,
+            base=bar_base,
+            orientation="h",
+            marker_color=bar_colors,
+            text=bar_labels,
+            textposition="inside",
+            insidetextanchor="start",
+            hovertext=bar_hovertext,
+            hoverinfo="text",
+            showlegend=False,
+        )
+    )
+
+    # Height: 28 px per bar + 80 px chrome. Floor at 240, cap at 1600.
+    chart_height = max(240, min(1600, 28 * len(plottable) + 80))
+
+    fig.update_layout(
+        height=chart_height,
+        xaxis=dict(
+            type="date",
+            title="",
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.08)",
+        ),
+        yaxis=dict(
+            autorange="reversed",  # earliest start at the top
+            title="",
+            tickfont=dict(size=11),
+        ),
+        margin=dict(l=10, r=10, t=20, b=10),
+        plot_bgcolor="white",
+        bargap=0.3,
+    )
+
+    # Today marker — vertical dashed line. Plotly date axes accept ms-since-
+    # epoch, and add_vline serializes datetime through the same JSON path
+    # the bar bases use, so the marker aligns with the bar base scale.
+    fig.add_shape(
+        type="line",
+        x0=datetime.combine(today, datetime.min.time()),
+        x1=datetime.combine(today, datetime.min.time()),
+        y0=0,
+        y1=1,
+        yref="paper",
+        line=dict(color="#ef4444", width=1, dash="dash"),
+    )
+
+    st.plotly_chart(fig, use_container_width=True, theme=None)
+
+    # ------- Tally projects with no dates (per spec) -------
+    if no_dates:
+        st.caption(
+            f"{len(no_dates)} project(s) with no dates — not shown on Timeline"
+        )
+
+    # ------- Click-to-open approximation via selectbox -------
+    selector_options = [(None, "— select to open project details —")] + [
+        (p["id"], f"{p['job_number']} — {p['name']}")
+        for (p, _sd, _ted) in plottable
+    ]
+    selected = st.selectbox(
+        "Open project",
+        options=[opt[0] for opt in selector_options],
+        format_func=lambda pid: next(
+            (lbl for (oid, lbl) in selector_options if oid == pid),
+            "—",
+        ),
+        key="ui:projects:timeline_open_select",
+    )
+    if selected is not None and selected != st.session_state.get(
+        "ui:projects:focus"
+    ):
+        st.session_state["ui:projects:focus"] = selected
+        st.rerun()
+
+    # ------- Detail panel for the focused project -------
+    focus_pid = st.session_state.get("ui:projects:focus")
+    visible_ids = {p["id"] for (p, _sd, _ted) in plottable}
+    if focus_pid is None or focus_pid not in visible_ids:
+        return
+
+    focus_proj = next(p for (p, _, _) in plottable if p["id"] == focus_pid)
+    st.markdown("---")
+    header_label = f"{focus_proj['job_number']} — {focus_proj['name']}"
+    head_col1, head_col2 = st.columns([6, 1])
+    with head_col1:
+        st.subheader(header_label)
+    with head_col2:
+        if st.button(
+            "← Close",
+            key=f"close_detail_timeline_p{focus_pid}",
+        ):
+            st.session_state["ui:projects:focus"] = None
+            st.rerun()
+    _render_project_detail_tabs(focus_proj, tab_idx=2)
 
 
 def render_calendar_view(projects: Sequence) -> None:

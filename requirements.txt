@@ -16,3 +16,4 @@ python-dotenv>=1.0,<2
 streamlit-aggrid>=1.2,<2
 streamlit-sortables>=0.3,<1
 streamlit-calendar>=1.4,<2
+plotly>=5.0,<7
