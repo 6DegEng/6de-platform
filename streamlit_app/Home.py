@@ -28,6 +28,7 @@ from db import ensure_db
 from modules.dashboard.queries import get_dashboard_data
 from modules.invoicing.crud import get_ar_aging_report, get_ar_aging_summary
 from streamlit_app.auth import require_auth, show_logout_button
+from modules.activity_formatter import format_activity
 from streamlit_app.components.formatters import (
     days_until,
     empty_state,
@@ -368,14 +369,11 @@ with left_col:
     activity = data["recent_activity"][:10]
     if activity:
         for entry in activity:
-            entity = (entry.get("entity_type") or "").replace("_", " ").title()
-            action = (entry.get("action") or "").replace("_", " ").title()
-            details = entry.get("details") or ""
+            summary = format_activity(entry)
             ts = format_date(entry.get("created_at"))
             st.markdown(
                 f'<div class="activity-item">'
-                f"<strong>{action}</strong> {entity} #{entry.get('entity_id', '')}"
-                f"{(' -- ' + details) if details else ''}"
+                f"{summary}"
                 f'<br><span class="activity-time">{ts}</span>'
                 f"</div>",
                 unsafe_allow_html=True,
