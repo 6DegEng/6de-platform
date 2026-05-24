@@ -56,6 +56,11 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 st.title("Financials")
 st.caption("6th Degree Engineering - Financial Analytics & Reporting")
+st.info(
+    "**Invoice / accrual basis** -- what has been billed. "
+    "For cash movements, see **Accounting**.",
+    icon="ℹ️",
+)
 
 # ---------------------------------------------------------------------------
 # Metrics row

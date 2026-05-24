@@ -53,6 +53,11 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 st.title("Accounting")
 st.caption("6th Degree Engineering - Transactions, Cashflow & Recurring Expenses")
+st.info(
+    "**Cash basis** -- what has actually moved through your accounts. "
+    "For invoices and AR, see **Financials**.",
+    icon="ℹ️",
+)
 
 # ---------------------------------------------------------------------------
 # Helper queries
