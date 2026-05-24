@@ -25,6 +25,8 @@ import sqlite3
 from datetime import datetime
 from typing import Any
 
+from modules.activity_utils import sanitize_details
+
 
 def bridge_available(calc_conn: sqlite3.Connection | None) -> bool:
     """Return True if the calc bridge can serve reads in the current context.
@@ -55,16 +57,35 @@ def _log_activity(
     conn.execute(
         "INSERT INTO activity_log (entity_type, entity_id, action, details, created_at) "
         "VALUES (?, ?, ?, ?, ?)",
-        (entity_type, entity_id, action, json.dumps(details or {}), _now()),
+        (entity_type, entity_id, action, json.dumps(sanitize_details(details)), _now()),
     )
 
 
-def read_calc_projects(calc_conn: sqlite3.Connection) -> list[dict]:
-    rows = calc_conn.execute(
+def read_calc_projects(
+    calc_conn: sqlite3.Connection,
+    *,
+    hide_fixtures: bool = True,
+) -> list[dict]:
+    """Read calc-engine projects, optionally filtering test/fixture entries.
+
+    When *hide_fixtures* is True (the default), rows whose ``project_name``
+    matches common fixture patterns are excluded so that the UI dropdown
+    shows only real engineering projects.
+    """
+    sql = (
         "SELECT project_id, project_name, project_address AS address, "
         "client_name, structure_type, discipline, code_basis, status "
-        "FROM projects ORDER BY project_id DESC"
-    ).fetchall()
+        "FROM projects"
+    )
+    if hide_fixtures:
+        sql += (
+            " WHERE LOWER(project_name) NOT LIKE 's26%'"
+            " AND LOWER(project_name) NOT LIKE '%smoke%'"
+            " AND LOWER(project_name) NOT LIKE '%fixture%'"
+            " AND LOWER(project_name) NOT LIKE '%test%'"
+        )
+    sql += " ORDER BY project_id DESC"
+    rows = calc_conn.execute(sql).fetchall()
     return [dict(r) for r in rows]
 
 
