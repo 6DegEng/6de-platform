@@ -41,6 +41,29 @@ ambiguities surfaced during the 2026-05-24 platform audit.
 
 ---
 
+## Session 3c — Data hygiene pass — 2026-05-24
+
+Cross-platform data-quality fixes surfaced by the UX audit (`platform_ux_audit_2026-05-24.md`).
+
+### NaN-safe activity log serialization
+- **`modules/activity_utils.py`** (new): `sanitize_details()` walks activity detail dicts and replaces `float('nan')` / `float('inf')` with `None` before `json.dumps`. Prevents the non-standard `NaN` token from appearing in stored JSON.
+- All 11 `_log_activity` / `log_activity` call sites across `db/__init__.py`, `modules/projects/crud.py`, `modules/calculator/bridge.py`, `modules/crm/crud.py`, `modules/invoicing/crud.py`, `modules/permits/crud.py`, `modules/billing/crud.py`, `modules/bids/crud.py`, `modules/documents/crud.py`, `modules/timekeeping/crud.py`, and `modules/subconsultants/crud.py` now route through `sanitize_details()`.
+
+### Human-readable activity formatter
+- **`modules/activity_formatter.py`** (new): `format_activity(entry)` converts raw `activity_log` rows into English one-liners. Covers all entity types: project, invoice, permit, calc_link, opportunity, milestone, client, bid, document, and a generic fallback.
+- **Home dashboard** (`streamlit_app/Home.py`): Recent Activity section now displays formatted sentences instead of raw JSON + entity type labels.
+
+### Calc-engine fixture filter
+- **`modules/calculator/bridge.py`**: `read_calc_projects()` gains a `hide_fixtures: bool = True` parameter. When True, filters out project names matching `S26%`, `%smoke%`, `%fixture%`, `%test%` (case-insensitive).
+- **Calculator page** (`streamlit_app/pages/8_Calculator.py`): Added "Show test/fixture data" toggle (default off). Both the Link and Browse sub-tabs respect the toggle.
+- **Projects page** (`streamlit_app/pages/1_Projects.py`): Uses the default `hide_fixtures=True` -- no UI change needed.
+
+### CRM empty-client rendering
+- **CRM page** (`streamlit_app/pages/4_CRM.py`): Null `client_name` now renders as an em-dash (`—`) instead of the literal string "No client", consistent with the platform's empty-field convention.
+
+### Tests
+- **`tests/test_activity_nan_safe.py`** (new, 23 tests): Covers `sanitize_details()` (NaN, Inf, nested values), `format_activity()` (all entity types), and integration through the project CRUD layer.
+
 ## Session 3a — Projects page UI uplift — 2026-05-23
 
 The Projects page goes from a single vertical-expander list to a Monday-style 4-view board: Table / Kanban / Timeline / Calendar. Pilot module — the same pattern is planned for CRM, Bids, and Permits in later sessions.

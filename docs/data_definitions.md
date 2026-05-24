@@ -224,6 +224,33 @@ WHERE active = 1;
 
 ---
 
+## 11. Calc-Engine Project List (filtered)
+
+**Source:** `projects` table in the calc-engine `common.db` (read-only bridge).
+
+**Default behavior (hide_fixtures=True):**
+```sql
+SELECT ... FROM projects
+WHERE LOWER(project_name) NOT LIKE 's26%'
+  AND LOWER(project_name) NOT LIKE '%smoke%'
+  AND LOWER(project_name) NOT LIKE '%fixture%'
+  AND LOWER(project_name) NOT LIKE '%test%'
+ORDER BY project_id DESC
+```
+
+**Where shown:** Calculator page (Link / Browse tabs), Projects page (Link
+Calculator Project form).
+
+**Why filtered:** The upstream calc engine's `common.db` contains test and
+smoke-test entries (e.g., "S26 LIVE smoke") used during development. These
+pollute the dropdown and confuse users. The filter is applied by default;
+a "Show test/fixture data" toggle on the Calculator page disables it when
+needed for debugging.
+
+**Added:** 2026-05-24, Session 3c data-hygiene pass.
+
+---
+
 ## Phase 0 follow-ups for the Financials page
 
 - Rename `Revenue YTD` → `Invoiced Revenue YTD` (matches Home's "Cash Inflows YTD" pattern). **Done 2026-05-13.**
