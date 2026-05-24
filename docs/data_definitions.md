@@ -109,7 +109,7 @@ WHERE status IN ('sent', 'overdue');
 
 ---
 
-## 6. Outstanding (Projects)
+## 6. Contracted Backlog *(was: "Outstanding (Projects)")*
 
 **Source:** `projects` table — the `outstanding_balance` column populated by
 the project tracker import.
@@ -120,12 +120,17 @@ SELECT COALESCE(SUM(outstanding_balance), 0)
 FROM projects;
 ```
 
-**Where shown:** Home dashboard "Outstanding (Projects)" card.
+**Where shown:** Home dashboard "Contracted Backlog" card.
+
+**What it tells you:** *Total contracted work that has not yet been invoiced.*
+This is the project-contract-residual — the difference between what's been
+contracted and what's been billed. Renamed from "Outstanding" (2026-05-24)
+to disambiguate from Outstanding AR on the Billing and Financials pages.
 
 **Relationship to Outstanding (Invoices):** these will diverge until Phase 6
 issues invoices for each project's balance. Today the Projects column is
 populated from the Excel tracker (Juan's manual tracking); the Invoices
-column is $0 (no invoices issued). After Phase 6, "Outstanding (Projects)"
+column is $0 (no invoices issued). After Phase 6, "Contracted Backlog"
 becomes derived from the invoice ledger and the two converge.
 
 ---
