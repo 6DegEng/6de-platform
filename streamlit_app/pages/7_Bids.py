@@ -52,7 +52,7 @@ from streamlit_app.auth import require_auth  # noqa: E402
 # Page config
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Bids & Subconsultants | 6DE",
+    page_title="Gov Solicitations | 6DE",
     page_icon="📋",
     layout="wide",
 )

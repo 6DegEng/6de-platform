@@ -146,7 +146,7 @@ st.divider()
 # Main tabs
 # ---------------------------------------------------------------------------
 tab_invoices, tab_proposals, tab_project = st.tabs(
-    ["Invoices", "Proposals", "Project Billing"]
+    ["Invoices", "Proposal Documents", "Project Billing"]
 )
 
 # ============================= INVOICES TAB ===============================
