@@ -19,6 +19,8 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from modules.activity_utils import sanitize_details
+
 from config import (
     AUTH_CONFIG_PATH,  # noqa: F401 — re-exported for convenience
     CALC_DB_PATH,
@@ -238,7 +240,7 @@ def log_activity(
     conn.execute(
         "INSERT INTO activity_log (entity_type, entity_id, action, details) "
         "VALUES (?, ?, ?, ?)",
-        (entity_type, entity_id, action, json.dumps(details or {})),
+        (entity_type, entity_id, action, json.dumps(sanitize_details(details))),
     )
 
 

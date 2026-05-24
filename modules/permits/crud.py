@@ -11,6 +11,8 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from modules.activity_utils import sanitize_details
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -64,7 +66,7 @@ def _log_activity(
     conn.execute(
         "INSERT INTO activity_log (entity_type, entity_id, action, details) "
         "VALUES (?, ?, ?, ?)",
-        (entity_type, entity_id, action, json.dumps(details or {})),
+        (entity_type, entity_id, action, json.dumps(sanitize_details(details))),
     )
 
 
