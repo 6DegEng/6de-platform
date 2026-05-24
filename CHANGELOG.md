@@ -1,5 +1,43 @@
 # Changelog
 
+## Bank CSV Import (Phase 0) -- 2026-05-24
+
+Bank of America CSV import pipeline for the Accounting page. Phase 0 of the bank integration roadmap (CSV first, Plaid later). Ships immediate value: transactions auto-categorize on upload using the existing 40+ VBA-ported rules engine.
+
+### Schema
+- New `bank_connections` table: tracks import sources (institution, account mask, type).
+- New `sync_runs` table: audit trail for each CSV upload (timestamps, row counts, errors).
+- `transactions` table extended with: `external_id` (row hash for dedup), `bank_connection_id`, `auto_categorized`, `needs_review`, `sync_run_id`.
+
+### Banking module (`modules/banking/`)
+- `csv_import.py`: BofA CSV parser handles header detection (present or absent), MM/DD/YYYY dates, comma/dollar-sign amounts, UTF-8/BOM/Latin-1 encoding, empty/malformed row warnings. SHA-256 row hashing for dedup. Categorization pass via existing rules engine. INSERT OR IGNORE commit with sync run tracking.
+- `rules.py`: CRUD operations for categorization rules (create, update, delete, list, match_pattern). Regex validation on create/update.
+
+### UI
+- New "CSV Import" tab on Accounting page (`9_Accounting.py`):
+  - Bank connection setup (institution, account mask, account type)
+  - File uploader with parse preview (auto-categorized vs. needs-review color coding)
+  - Summary metrics: row count, categorized count, review count, date range, credits/debits/net
+  - Confirm-and-import with duplicate detection and sync run audit trail
+  - Import history table
+
+### Tests
+- 78 new tests (22 parser, 25 categorization engine, 7 integration, 24 rules CRUD)
+- Full round-trip tested: CSV text -> parse -> categorize -> commit -> verify DB -> reimport dedup
+
+### Spec
+- `docs/specs/bank_csv_import_v1.md`: schema design, column mapping, algorithm, UI sketch
+
+### Blocker
+- No real BofA CSV sample in repo. Parser built against documented format; tested with synthetic data. Add a scrubbed sample for validation.
+
+### Future (Phase 1+)
+- Plaid integration as second source via same `bank_connections`/`sync_runs` model
+- Auto-reconciliation of payments against open invoices
+- AI-assisted categorization for ambiguous transactions
+
+---
+
 ## Session 3a — Projects page UI uplift — 2026-05-23
 
 The Projects page goes from a single vertical-expander list to a Monday-style 4-view board: Table / Kanban / Timeline / Calendar. Pilot module — the same pattern is planned for CRM, Bids, and Permits in later sessions.

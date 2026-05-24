@@ -74,6 +74,7 @@ The startup banner from `python launch_platform.py` prints the resolved values �
 │   └── schema.sql                 # Table definitions
 ├── modules/                       # Domain logic — one folder per page
 │   ├── accounting/
+│   ├── banking/                   # BofA CSV import, categorization rules CRUD
 │   ├── bids/
 │   ├── billing/
 │   ├── calculator/                # Lazy bridge to common.db; safe when missing
@@ -182,6 +183,8 @@ pytest tests/ -q
 ```
 
 Five smoke tests live in `tests/test_smoke.py`. CI runs them on every push. They cover schema init, transaction dedup, invoice numbering, and the `transactions.source` column migration.
+
+The banking module has 78 additional tests covering the CSV parser (encoding, date/amount edge cases, header detection), categorization engine (priority ordering, first-match-wins, CRUD), and a full round-trip integration test (parse -> categorize -> commit -> dedup on reimport).
 
 ---
 
