@@ -32,6 +32,15 @@ from streamlit_app.components.formatters import (  # noqa: E402
     urgency_color,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
+from modules.banking.csv_import import (  # noqa: E402
+    parse_bofa_csv,
+    categorize as categorize_parsed,
+    commit_transactions,
+    create_sync_run,
+    complete_sync_run,
+    get_or_create_bank_connection,
+    get_sync_history,
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -114,8 +123,8 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_txn, tab_cashflow, tab_recurring, tab_categorization = st.tabs(
-    ["Transactions", "Cashflow", "Recurring Expenses", "Categorization"]
+tab_txn, tab_cashflow, tab_recurring, tab_categorization, tab_csv_import = st.tabs(
+    ["Transactions", "Cashflow", "Recurring Expenses", "Categorization", "CSV Import"]
 )
 
 # ========================== TAB 1: TRANSACTIONS ============================
@@ -787,6 +796,232 @@ with tab_categorization:
                 conn.commit()
                 st.success(f"Deleted rule #{sel_rule_id}.")
                 st.rerun()
+
+# ======================== TAB 5: CSV IMPORT =================================
+with tab_csv_import:
+    st.subheader("Bank CSV Import")
+    st.caption(
+        "Upload a Bank of America CSV export to import transactions. "
+        "Transactions are auto-categorized using the rules engine."
+    )
+
+    # -- Bank Connection Setup --
+    st.markdown("#### Bank Connection")
+
+    bc_rows = conn.execute(
+        "SELECT * FROM bank_connections WHERE source = 'csv' ORDER BY created_at DESC"
+    ).fetchall()
+
+    if bc_rows:
+        bc_options = {
+            r["id"]: f'{r["institution_name"] or "Bank"} ...{r["account_mask"] or "????"} ({r["account_type"] or "checking"})'
+            for r in bc_rows
+        }
+        bc_options[0] = "+ Add new connection"
+        sel_bc_id = st.selectbox(
+            "Select bank account",
+            options=list(bc_options.keys()),
+            format_func=lambda x: bc_options[x],
+            key="csv_bank_connection",
+        )
+    else:
+        sel_bc_id = 0
+
+    if sel_bc_id == 0:
+        st.markdown("**Set up a new bank connection:**")
+        bc_c1, bc_c2, bc_c3 = st.columns(3)
+        new_inst = bc_c1.text_input(
+            "Institution Name", value="Bank of America", key="csv_inst_name"
+        )
+        new_mask = bc_c2.text_input(
+            "Account Last 4 Digits", max_chars=4, key="csv_acct_mask"
+        )
+        new_acct_type = bc_c3.selectbox(
+            "Account Type",
+            ["checking", "savings", "credit"],
+            key="csv_acct_type",
+        )
+        if st.button("Save Connection", key="csv_save_connection"):
+            if not new_mask.strip():
+                st.error("Please enter the last 4 digits of the account.")
+            else:
+                bc_id = get_or_create_bank_connection(
+                    conn, new_inst.strip(), new_mask.strip(), new_acct_type
+                )
+                st.success(f"Bank connection saved (ID: {bc_id}).")
+                st.rerun()
+        active_bc_id = None
+    else:
+        active_bc_id = sel_bc_id
+
+    # -- File Upload --
+    st.markdown("---")
+    st.markdown("#### Upload CSV")
+
+    uploaded_file = st.file_uploader(
+        "Upload BofA CSV",
+        type=["csv"],
+        key="csv_upload",
+        help="Export from Bank of America Online Banking: Account Activity > Download > CSV",
+    )
+
+    if uploaded_file is not None and active_bc_id is not None:
+        # Parse the CSV
+        with st.spinner("Parsing CSV..."):
+            transactions_parsed, parse_warnings = parse_bofa_csv(uploaded_file)
+
+        if parse_warnings:
+            with st.expander(f"Parser warnings ({len(parse_warnings)})", expanded=False):
+                for w in parse_warnings:
+                    st.warning(w)
+
+        if not transactions_parsed:
+            st.error("No valid transactions found in the uploaded file.")
+        else:
+            # Run categorization
+            transactions_parsed = categorize_parsed(transactions_parsed, conn)
+
+            # -- Preview --
+            st.markdown("---")
+            st.markdown("#### Preview")
+
+            categorized_count = sum(
+                1 for t in transactions_parsed if t.get("auto_categorized")
+            )
+            review_count = len(transactions_parsed) - categorized_count
+
+            # Date range
+            dates = [t["txn_date"] for t in transactions_parsed]
+            date_min = min(dates) if dates else "N/A"
+            date_max = max(dates) if dates else "N/A"
+
+            pm1, pm2, pm3, pm4 = st.columns(4)
+            pm1.metric("Total Rows", f"{len(transactions_parsed):,}")
+            pm2.metric("Auto-Categorized", f"{categorized_count:,}")
+            pm3.metric("Needs Review", f"{review_count:,}")
+            pm4.metric("Date Range", f"{date_min} to {date_max}")
+
+            # Build preview DataFrame
+            preview_data = []
+            for t in transactions_parsed:
+                preview_data.append({
+                    "Date": t["txn_date"],
+                    "Description": t["description"],
+                    "Amount": t["amount"],
+                    "Balance": t.get("balance"),
+                    "Category": t.get("expense_category") or "",
+                    "Status": "Auto" if t.get("auto_categorized") else "Review",
+                })
+
+            df_preview = pd.DataFrame(preview_data)
+
+            def _style_import_status(val):
+                if val == "Auto":
+                    return "color: #198754; font-weight: 600"
+                if val == "Review":
+                    return "color: #fd7e14; font-weight: 600"
+                return ""
+
+            st.dataframe(
+                df_preview.style
+                .format({"Amount": "${:,.2f}", "Balance": "${:,.2f}"})
+                .map(_style_import_status, subset=["Status"]),
+                use_container_width=True,
+                hide_index=True,
+                height=min(len(preview_data) * 38 + 40, 500),
+            )
+
+            # Total amounts
+            total_in = sum(t["amount"] for t in transactions_parsed if t["amount"] > 0)
+            total_out = sum(t["amount"] for t in transactions_parsed if t["amount"] < 0)
+
+            ti1, ti2, ti3 = st.columns(3)
+            ti1.metric("Total Credits", format_currency(total_in))
+            ti2.metric("Total Debits", format_currency(abs(total_out)))
+            ti3.metric("Net", format_currency(total_in + total_out))
+
+            # -- Confirm & Import --
+            st.markdown("---")
+            if st.button(
+                f"Import {len(transactions_parsed)} Transactions",
+                type="primary",
+                key="csv_confirm_import",
+                use_container_width=True,
+            ):
+                with st.spinner("Importing transactions..."):
+                    # Create sync run
+                    run_id = create_sync_run(
+                        conn, active_bc_id, uploaded_file.name
+                    )
+
+                    try:
+                        # Update account label on each transaction
+                        acct_label_row = conn.execute(
+                            "SELECT institution_name, account_mask "
+                            "FROM bank_connections WHERE id = ?",
+                            (active_bc_id,),
+                        ).fetchone()
+                        acct_label = (
+                            f'{acct_label_row["institution_name"] or "Bank"} '
+                            f'...{acct_label_row["account_mask"] or "????"}'
+                            if acct_label_row
+                            else f"Connection #{active_bc_id}"
+                        )
+                        for t in transactions_parsed:
+                            t["_account_label"] = acct_label
+
+                        # Commit with proper account labels
+                        inserted, skipped = commit_transactions(
+                            conn, transactions_parsed, run_id, active_bc_id
+                        )
+
+                        # Update account column for newly inserted rows
+                        conn.execute(
+                            "UPDATE transactions SET account = ? "
+                            "WHERE sync_run_id = ? AND bank_connection_id = ?",
+                            (acct_label, run_id, active_bc_id),
+                        )
+                        conn.commit()
+
+                        complete_sync_run(conn, run_id, inserted, 0)
+
+                        if inserted > 0:
+                            st.success(
+                                f"Imported {inserted} transaction(s). "
+                                f"{skipped} duplicate(s) skipped."
+                            )
+                        else:
+                            st.info(
+                                f"All {skipped} transaction(s) already exist in the database."
+                            )
+                    except Exception as exc:
+                        complete_sync_run(conn, run_id, 0, 0, str(exc))
+                        st.error(f"Import failed: {exc}")
+
+    elif uploaded_file is not None and active_bc_id is None:
+        st.warning("Please set up a bank connection before uploading a CSV.")
+
+    # -- Import History --
+    st.markdown("---")
+    st.markdown("#### Import History")
+
+    history = get_sync_history(conn, limit=20)
+    if history:
+        hist_data = []
+        for h in history:
+            hist_data.append({
+                "Date": format_date(h["started_at"]),
+                "Bank": f'{h.get("institution_name") or "Bank"} ...{h.get("account_mask") or "????"}',
+                "File": h.get("file_name") or "",
+                "Added": h.get("transactions_added") or 0,
+                "Updated": h.get("transactions_updated") or 0,
+                "Status": "Error" if h.get("error_message") else "OK",
+                "Error": h.get("error_message") or "",
+            })
+        df_hist = pd.DataFrame(hist_data)
+        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+    else:
+        st.info("No import history yet. Upload a CSV above to get started.")
 
 # ---------------------------------------------------------------------------
 # Footer
