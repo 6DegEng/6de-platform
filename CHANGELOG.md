@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased] — Sidebar Information Architecture — 2026-05-24
+
+UX audit-driven pass that groups the ten flat sidebar items into four logical
+sections (Overview, Sales Pipeline, Tools, Finance) and fixes several naming
+ambiguities surfaced during the 2026-05-24 platform audit.
+
+### Sidebar
+- **Grouped navigation:** Custom sidebar using `st.page_link()` with four
+  section headers (Overview, Sales Pipeline, Tools, Finance). Hides the default
+  Streamlit auto-generated flat nav via CSS.
+- **Calculator -> Engineering:** Sidebar label renamed to match the page H1.
+- **Bids -> Gov Solicitations:** Sidebar label and page title renamed to
+  disambiguate from CRM proposals and Billing proposal documents.
+
+### Label & Metric Renames
+- **Home "Outstanding" -> "Contracted Backlog":** Renamed with `help=` tooltip
+  to clarify this is contracted-but-not-invoiced project work, not AR.
+- **Billing "Proposals" tab -> "Proposal Documents":** Label-only rename to
+  distinguish from CRM pipeline proposals.
+
+### Accounting Clarity
+- **Cash-vs-accrual callout on Financials:** One-line `st.info()` explaining
+  invoice/accrual basis with cross-link to Accounting.
+- **Cash-vs-accrual callout on Accounting:** One-line `st.info()` explaining
+  cash basis with cross-link to Financials.
+
+### Docs
+- `docs/data_definitions.md` section 6: renamed to "Contracted Backlog" with
+  updated rationale.
+- `docs/specs/sidebar_ia_v1.md`: Full implementation spec.
+- `docs/audit/sidebar_implementation_notes_2026-05-24.md`: Research notes.
+
+### Tests
+- 125/128 pass. 3 pre-existing AppTest failures (Kanban view widget state bug,
+  search filter widget state bug) -- all unrelated to sidebar changes.
+
+### Version
+- Bumped to v3.5 in `streamlit_app/Home.py`.
+
+---
+
 ## Session 3a — Projects page UI uplift — 2026-05-23
 
 The Projects page goes from a single vertical-expander list to a Monday-style 4-view board: Table / Kanban / Timeline / Calendar. Pilot module — the same pattern is planned for CRM, Bids, and Permits in later sessions.
