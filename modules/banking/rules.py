@@ -133,7 +133,7 @@ def list_rules(
     return [dict(r) for r in conn.execute(sql).fetchall()]
 
 
-def test_pattern(
+def match_pattern(
     conn: sqlite3.Connection,
     description: str,
 ) -> Optional[dict]:
