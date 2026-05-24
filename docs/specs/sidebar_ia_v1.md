@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-24
 **Branch:** `feature/sidebar-information-architecture`
-**Status:** IN PROGRESS
+**Status:** IMPLEMENTED
 
 ---
 
@@ -101,11 +101,14 @@ be hidden via CSS since we render our own grouped navigation.
 
 ---
 
-## 5. Verification Plan
+## 5. Verification Results (2026-05-24)
 
-- `pytest tests/ -x -q` -- all existing tests pass
-- Launch app on port 8504, curl each page route for HTTP 200
-- Visual: sidebar shows four grouped sections
-- Visual: Home shows "Contracted Backlog" instead of "Outstanding"
-- Visual: Billing shows "Proposal Documents" tab
-- Visual: Financials and Accounting show cash-vs-accrual callouts
+- `pytest tests/ -q` -- 125/128 pass. 3 failures pre-existing (AppTest
+  widget state bugs in Kanban + search tests, unrelated to sidebar).
+- All 10 page routes return HTTP 200 on port 8504.
+- [x] Sidebar shows four grouped sections
+- [x] Home shows "Contracted Backlog" instead of "Outstanding"
+- [x] Billing shows "Proposal Documents" tab
+- [x] Financials and Accounting show cash-vs-accrual callouts
+- [x] Gov Solicitations label in sidebar and page title
+- [x] Engineering label in sidebar
