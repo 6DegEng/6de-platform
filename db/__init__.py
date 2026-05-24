@@ -55,6 +55,11 @@ _ALTER_COLUMNS = [
     ("projects", "contact_name", "TEXT"),
     ("projects", "contact_phone", "TEXT"),
     ("transactions", "source", "TEXT DEFAULT 'excel_sync'"),
+    ("transactions", "external_id", "TEXT"),
+    ("transactions", "bank_connection_id", "INTEGER"),
+    ("transactions", "auto_categorized", "INTEGER DEFAULT 0"),
+    ("transactions", "needs_review", "INTEGER DEFAULT 0"),
+    ("transactions", "sync_run_id", "INTEGER"),
     ("opportunities", "source_proposal_id", "INTEGER"),
     # Phase 2 — SharePoint document layer
     ("documents", "sharepoint_item_id", "TEXT"),
