@@ -331,7 +331,7 @@ with tab_pipeline:
                 badge = _stage_badge(opp_stage)
                 value_str = format_currency(opp["estimated_value"])
                 svc = SERVICE_LINE_LABELS.get(opp["service_line"] or "", opp["service_line"] or "")
-                client_label = opp["client_name"] or "No client"
+                client_label = opp["client_name"] or "—"
 
                 header = f"{badge}  **{opp['name']}**  |  {client_label}  |  {svc}  |  {value_str}"
 
