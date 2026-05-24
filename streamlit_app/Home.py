@@ -114,17 +114,70 @@ st.markdown(
 require_auth()
 
 # ---------------------------------------------------------------------------
-# Sidebar
+# Sidebar — grouped information architecture (4 sections)
 # ---------------------------------------------------------------------------
+# Hide the default auto-generated sidebar nav so our grouped nav is the
+# only navigation the user sees.
+st.markdown(
+    """
+    <style>
+    /* Hide default Streamlit multi-page sidebar nav */
+    [data-testid="stSidebarNav"] { display: none; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 with st.sidebar:
     show_logout_button()
     st.markdown("# 6th Degree Engineering")
-    st.caption("ERP Platform v3.4")
+    st.caption("ERP Platform v3.5")
     st.divider()
+
+    # -- Overview --
     st.markdown(
-        "Pages load automatically from the **pages/** folder.  "
-        "Use the navigation above to switch views."
+        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
+        "text-transform:uppercase;letter-spacing:0.05em;'>Overview</span>",
+        unsafe_allow_html=True,
     )
+    st.page_link("Home.py", label="Home", icon=":material/home:")
+
+    st.markdown("")  # spacer
+
+    # -- Sales Pipeline --
+    st.markdown(
+        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
+        "text-transform:uppercase;letter-spacing:0.05em;'>Sales Pipeline</span>",
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/4_CRM.py", label="CRM", icon=":material/handshake:")
+    st.page_link("pages/7_Bids.py", label="Gov Solicitations", icon=":material/gavel:")
+    st.page_link("pages/1_Projects.py", label="Projects", icon=":material/folder:")
+    st.page_link("pages/3_Permits.py", label="Permits", icon=":material/description:")
+
+    st.markdown("")  # spacer
+
+    # -- Tools --
+    st.markdown(
+        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
+        "text-transform:uppercase;letter-spacing:0.05em;'>Tools</span>",
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/8_Calculator.py", label="Engineering", icon=":material/calculate:")
+
+    st.markdown("")  # spacer
+
+    # -- Finance --
+    st.markdown(
+        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
+        "text-transform:uppercase;letter-spacing:0.05em;'>Finance</span>",
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/2_Billing.py", label="Billing", icon=":material/receipt_long:")
+    st.page_link("pages/5_Timekeeping.py", label="Timekeeping", icon=":material/schedule:")
+    st.page_link("pages/6_Financials.py", label="Financials", icon=":material/monitoring:")
+    st.page_link("pages/9_Accounting.py", label="Accounting", icon=":material/account_balance:")
+
     st.divider()
     st.markdown(
         "<small style='color:#6c757d;'>Juan C. Castillo, P.E.&ensp;|&ensp;"
@@ -161,7 +214,9 @@ with c2:
     outstanding_display = max(
         data["outstanding_amount"], data.get("project_outstanding", 0)
     )
-    st.metric("Outstanding", format_currency_compact(outstanding_display))
+    st.metric("Contracted Backlog", format_currency_compact(outstanding_display),
+              help="Contracted work not yet invoiced (project basis). "
+                   "See docs/data_definitions.md §6.")
 
 with c3:
     overdue_val = format_currency_compact(data["overdue_amount"])
