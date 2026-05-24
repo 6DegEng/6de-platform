@@ -607,6 +607,35 @@ CREATE TABLE IF NOT EXISTS categorization_rules (
 CREATE INDEX IF NOT EXISTS idx_catrules_priority ON categorization_rules(priority);
 
 -- ============================================================
+-- BANK CONNECTIONS (CSV import sources, future Plaid items)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS bank_connections (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    source            TEXT    NOT NULL DEFAULT 'csv',
+    institution_name  TEXT,
+    account_mask      TEXT,
+    account_type      TEXT,
+    status            TEXT    NOT NULL DEFAULT 'active',
+    created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- SYNC RUNS (audit trail for each CSV upload or Plaid sync)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sync_runs (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    bank_connection_id  INTEGER REFERENCES bank_connections(id),
+    started_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    completed_at        TEXT,
+    transactions_added  INTEGER DEFAULT 0,
+    transactions_updated INTEGER DEFAULT 0,
+    file_name           TEXT,
+    error_message       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_runs_connection ON sync_runs(bank_connection_id);
+
+-- ============================================================
 -- SEED DATA: 2026 Fee Schedule
 -- ============================================================
 INSERT OR IGNORE INTO fee_schedule (role, hourly_rate, effective_date, description)
@@ -643,3 +672,5 @@ CREATE TABLE IF NOT EXISTS calc_required_checks (
 -- projects: service_line, budget_amount, contract_value, amount_paid,
 --           outstanding_balance, cogs, profit, percent_complete,
 --           priority, action_by, next_action, lead_source
+-- transactions: source, external_id, bank_connection_id,
+--               auto_categorized, needs_review, sync_run_id
