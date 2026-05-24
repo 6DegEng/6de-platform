@@ -65,6 +65,14 @@ with tab_calc:
         completed_links = [lk for lk in all_links if lk["status"] == "completed"]
         m3.metric("Completed", len(completed_links))
 
+        _show_fixtures = st.toggle(
+            "Show test/fixture data",
+            value=False,
+            key="calc_show_fixtures",
+            help="Include S26-prefixed smoke/test entries from the calc engine.",
+        )
+        _hide_fixtures = not _show_fixtures
+
         calc_sub_link, calc_sub_browse, calc_sub_detail = st.tabs(
             ["Link Calc to Project", "Browse Calc Projects", "Linked Details"]
         )
@@ -73,7 +81,7 @@ with tab_calc:
         with calc_sub_link:
             st.subheader("Link a Calculator Project to an ERP Project")
             projects = list_projects(conn)
-            calc_projects = read_calc_projects(calc_conn)
+            calc_projects = read_calc_projects(calc_conn, hide_fixtures=_hide_fixtures)
 
             if not projects:
                 st.info("No ERP projects yet. Create one on the Projects page first.")
@@ -109,7 +117,7 @@ with tab_calc:
         # ---- Browse ----
         with calc_sub_browse:
             st.subheader("Calculator Projects (from common.db)")
-            calc_projects = read_calc_projects(calc_conn)
+            calc_projects = read_calc_projects(calc_conn, hide_fixtures=_hide_fixtures)
             if not calc_projects:
                 st.info("No calculator projects found.")
             else:
