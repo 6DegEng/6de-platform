@@ -41,3 +41,13 @@ Post to a project-specific or general Slack channel when a new
 `project_update` is created with category `client_communication` or
 `internal_note`. Useful for keeping the team aware of client-facing
 activity without checking the platform.
+
+**Status — Phase 0 (composition) implemented 2026-05-31.**
+`modules/integrations/slack.py`: `should_notify(category)` (only
+`client_communication` / `internal_note` notify); `compose_slack_message(conn,
+update_id)` builds a Block Kit payload (header + section + context) + text
+fallback for a notifiable update (returns `None` otherwise);
+`find_notifiable_updates()` is the future-sweep helper. **No webhook POST** —
+composition only, gated by `ENABLE_SLACK_NOTIFY`. Covered by
+`tests/test_slack_notify.py` (11 tests). **Next slice:** wire a real incoming
+webhook + a project-update hook, behind the flag.
