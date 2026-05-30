@@ -86,6 +86,29 @@ def _sha256(content: bytes | str) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _portfolio_digest(
+    projects: list[dict], *, base_url: str, platform_version: str, today: date
+) -> str:
+    """Stable change-detection digest for the portfolio xlsx.
+
+    Hashes a canonical serialization of the *inputs* that determine the
+    spreadsheet, NOT the rendered .xlsx bytes. openpyxl stamps volatile data
+    into the saved file (ZIP member timestamps in particular), so two renders
+    of identical data are not byte-identical once a one-second boundary is
+    crossed. Hashing the bytes therefore produced spurious "changed" results
+    — re-uploading the portfolio on most syncs and intermittently failing the
+    "unchanged on second run" test. Hashing the inputs is both deterministic
+    and a more accurate "did the meaningful content change?" signal.
+    """
+    payload = {
+        "base_url": base_url,
+        "platform_version": platform_version,
+        "today": today.isoformat(),
+        "projects": projects,
+    }
+    return _sha256(json.dumps(payload, sort_keys=True, default=str))
+
+
 def _is_stub(client: Any) -> bool:
     return isinstance(client, StubGraphClient)
 
@@ -248,6 +271,7 @@ def sync_portfolio_xlsx(
     log_activity: bool = True,
 ) -> dict:
     """Render + upload (or local-write) the portfolio xlsx."""
+    today_eff = today or date.today()
     rows = conn.execute(
         "SELECT p.*, c.name AS client_name "
         "FROM projects p LEFT JOIN clients c ON p.client_id = c.id "
@@ -259,9 +283,14 @@ def sync_portfolio_xlsx(
         projects,
         base_url=base_url,
         platform_version=platform_version,
-        today=today,
+        today=today_eff,
     )
-    digest = _sha256(content)
+    # Change detection hashes the inputs, not the volatile xlsx bytes — see
+    # _portfolio_digest. Resolving today_eff once keeps the digest aligned with
+    # what render_portfolio_overview actually drew.
+    digest = _portfolio_digest(
+        projects, base_url=base_url, platform_version=platform_version, today=today_eff
+    )
 
     if state is None:
         state = load_state()
