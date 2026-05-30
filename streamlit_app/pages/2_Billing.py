@@ -10,6 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import empty_state
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -222,7 +223,7 @@ with tab_invoices:
                     if inv["notes"]:
                         st.write(f"**Notes:** {inv['notes']}")
     else:
-        st.info("No invoices match the current filters.")
+        empty_state("No invoices match the current filters.")
 
     # -- Create new invoice --
     st.subheader("Create New Invoice")
@@ -342,7 +343,7 @@ with tab_proposals:
                     if prop["notes"]:
                         st.write(f"**Notes:** {prop['notes']}")
     else:
-        st.info("No proposals match the current filters.")
+        empty_state("No proposals match the current filters.")
 
     # -- Create new proposal --
     st.subheader("Create New Proposal")
