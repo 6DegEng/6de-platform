@@ -7,6 +7,7 @@ density toggle, and lifecycle bucket grouping. All writes route through
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -299,10 +300,15 @@ def handle_row_save(
             changes["percent_complete"] = 0
 
     if "contract_value" in changes:
+        # Blank/garbage -> None (NULL), never NaN or a misleading 0. NaN is
+        # truthy, so the old ``float(x or 0)`` let NaN through and it poisoned
+        # SUMs / rendered as "$nan".
+        raw = changes["contract_value"]
         try:
-            changes["contract_value"] = float(changes["contract_value"] or 0)
+            val = float(raw)
+            changes["contract_value"] = None if math.isnan(val) or math.isinf(val) else val
         except (ValueError, TypeError):
-            changes["contract_value"] = 0
+            changes["contract_value"] = None
 
     try:
         update_project(conn, int(pid), **changes)

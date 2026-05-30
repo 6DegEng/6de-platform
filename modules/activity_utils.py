@@ -15,6 +15,18 @@ import math
 from typing import Any
 
 
+def nan_to_none(value: Any) -> Any:
+    """Return None for a NaN/Inf float, else the value unchanged.
+
+    Use at DB write boundaries so a blank/garbage numeric (which pandas and
+    ``float()`` happily turn into NaN) is stored as NULL rather than a NaN that
+    poisons SUMs and renders as "$nan". Non-float values pass through.
+    """
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
+
+
 def _sanitize_value(v: Any) -> Any:
     """Replace non-finite floats with None; recurse into dicts and lists."""
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
