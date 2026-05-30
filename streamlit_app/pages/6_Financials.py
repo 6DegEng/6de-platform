@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap
@@ -54,7 +55,7 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.title("Financials")
+page_header("Financials", "Cashflow, AR aging & forecasts", "📈")
 st.caption("6th Degree Engineering - Financial Analytics & Reporting")
 st.info(
     "**Invoice / accrual basis** -- what has been billed. "

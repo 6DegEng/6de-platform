@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path setup — ensure the platform root is importable
@@ -216,7 +217,7 @@ def _get_projects():
 # Page header
 # ---------------------------------------------------------------------------
 
-st.title("Permit Tracker")
+page_header("Permit Tracker", "Permits, inspections & deadlines", "📋")
 st.caption("Miami-Dade County RER -- Building Permits, Recertifications, and CCAs")
 
 # ---------------------------------------------------------------------------

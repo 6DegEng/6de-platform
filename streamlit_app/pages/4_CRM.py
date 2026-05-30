@@ -11,6 +11,7 @@ from datetime import date
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — allow imports from the platform root
@@ -51,7 +52,7 @@ from streamlit_app.auth import require_auth  # noqa: E402
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="CRM | 6DE Platform", page_icon="📊", layout="wide")
 require_auth()
-st.title("CRM & Pipeline")
+page_header("CRM & Pipeline", "Opportunities & client relationships", "📊")
 st.caption("6th Degree Engineering -- Opportunity Pipeline and Client Management")
 
 conn = ensure_db()

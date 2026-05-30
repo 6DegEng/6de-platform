@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap
@@ -60,7 +61,7 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.title("Accounting")
+page_header("Accounting", "Income, expenses & categorization", "🧾")
 st.caption("6th Degree Engineering - Transactions, Cashflow & Recurring Expenses")
 st.info(
     "**Cash basis** -- what has actually moved through your accounts. "
