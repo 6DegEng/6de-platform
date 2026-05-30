@@ -21,6 +21,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
 
 from db import ensure_db  # noqa: E402
 from modules.crm.crud import (  # noqa: E402
+    ACTIVE_STAGES,
     SOURCES,
     SERVICE_LINES,
     STAGES,
@@ -147,7 +148,7 @@ met_col1, met_col2, met_col3, met_col4 = st.columns(4)
 met_col1.metric(
     "Total Pipeline Value",
     format_currency(summary["total_pipeline_value"]),
-    help="Sum of estimated values for all active opportunities (excludes lost/dormant)",
+    help="Sum of estimated values for active opportunities (lead/qualifying/proposal_sent/negotiating; excludes won/lost/dormant)",
 )
 met_col2.metric(
     "Weighted Forecast",
@@ -157,7 +158,7 @@ met_col2.metric(
 met_col3.metric(
     "Active Opportunities",
     str(summary["active_count"]),
-    help="Opportunities not in lost or dormant stage",
+    help="Opportunities in an open stage: lead, qualifying, proposal_sent, or negotiating (excludes won/lost/dormant)",
 )
 met_col4.metric(
     "Win Rate",
@@ -323,7 +324,21 @@ with tab_pipeline:
                 )
                 continue
 
-            st.markdown(f"**{len(opps)} opportunit{'ies' if len(opps) != 1 else 'y'}**")
+            total_shown = len(opps)
+            if stage_filter is None:
+                # "All" tab mixes active + closed stages. Spell out the split so
+                # this list reconciles with the "Active Opportunities" KPI above
+                # (which counts only ACTIVE_STAGES) instead of looking divergent.
+                active_shown = sum(1 for o in opps if o["stage"] in ACTIVE_STAGES)
+                noun = "opportunity" if total_shown == 1 else "opportunities"
+                st.markdown(
+                    f"**{total_shown} {noun} total** "
+                    f"&nbsp;·&nbsp; {active_shown} active "
+                    f"(in {', '.join(ACTIVE_STAGES)})"
+                )
+            else:
+                noun = "opportunity" if total_shown == 1 else "opportunities"
+                st.markdown(f"**{total_shown} {noun}**")
 
             for opp in opps:
                 oid = opp["id"]
