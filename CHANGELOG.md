@@ -1,5 +1,26 @@
 # Changelog
 
+## Delivery-milestone email (Phase 0 — composition) -- 2026-05-30
+
+Second integrations slice (`docs/roadmap/integrations.md` #2). Credential-free,
+composition-only — no SMTP/Graph send.
+
+### Module (`modules/integrations/delivery_email.py`)
+- `is_delivery_milestone(name)`: case-insensitive match against a curated
+  `DELIVERY_PATTERNS` list (conservative — internal milestones don't trigger).
+- `compose_delivery_email(conn, milestone_id)`: builds recipient/subject/body
+  for a *completed* delivery milestone (else returns `None`); resolves client
+  email with a graceful fallback; brand-correct sign-off (PE #98059, info@6de.xyz).
+- `find_completed_delivery_milestones(conn, project_id=None)`: future-sweep helper.
+
+### Config
+- New `ENABLE_DELIVERY_EMAIL` feature flag (default off).
+
+### Tests
+- `tests/test_delivery_email.py` (17 tests): pattern matcher (pos/neg), completed-
+  only + delivery-only guards, missing milestone, recipient resolution + fallback,
+  generic greeting, message content, and the sweep filter.
+
 ## QuickBooks Invoice Export (Phase 0 — CSV) -- 2026-05-29
 
 First slice of the QuickBooks integration (`docs/roadmap/integrations.md` #1).

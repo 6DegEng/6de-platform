@@ -67,6 +67,10 @@ def _flag(name: str, default: bool = False) -> bool:
 # See modules/integrations/quickbooks.py and docs/roadmap/integrations.md.
 ENABLE_QBO_EXPORT = _flag("ENABLE_QBO_EXPORT", False)
 
+# Delivery-milestone notification email (composed only — no SMTP send here).
+# See modules/integrations/delivery_email.py and docs/roadmap/integrations.md #2.
+ENABLE_DELIVERY_EMAIL = _flag("ENABLE_DELIVERY_EMAIL", False)
+
 # ---------------------------------------------------------------------------
 # Local SQLite path — OUT of OneDrive sync by default to avoid lock cascades.
 # ---------------------------------------------------------------------------

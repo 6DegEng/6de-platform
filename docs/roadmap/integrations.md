@@ -24,6 +24,17 @@ Send a notification email when a project hits a delivery milestone
 (e.g. permit package submitted, report delivered). Trigger: milestone
 status → `completed` where milestone name matches a delivery pattern.
 
+**Status — Phase 0 (composition) implemented 2026-05-30.**
+`modules/integrations/delivery_email.py`: `is_delivery_milestone(name)` matches
+a curated `DELIVERY_PATTERNS` list (conservative, so internal milestones don't
+fire); `compose_delivery_email(conn, milestone_id)` builds recipient/subject/
+body for a *completed* delivery milestone (returns `None` otherwise), resolving
+the client email with a graceful fallback; `find_completed_delivery_milestones()`
+is the future-sweep helper. **No SMTP/Graph send** — composition only, gated by
+the `ENABLE_DELIVERY_EMAIL` flag. Covered by `tests/test_delivery_email.py`
+(17 tests). **Next slice:** wire the actual send (Outlook SMTP or Graph) + a
+milestone-completion hook, behind the flag.
+
 ## 3. Slack on Phase = Comments
 
 Post to a project-specific or general Slack channel when a new
