@@ -1,5 +1,28 @@
 # Changelog
 
+## QuickBooks Invoice Export (Phase 0 — CSV) -- 2026-05-29
+
+First slice of the QuickBooks integration (`docs/roadmap/integrations.md` #1).
+Credential-free, pure data transform — no QBO API yet.
+
+### Module (`modules/integrations/`)
+- `quickbooks.py`: `export_invoices_to_qbo_csv(conn, statuses=, invoice_ids=)`
+  serializes finalized invoices (`sent`/`paid`/`overdue` by default) into the
+  QuickBooks Online invoice-import CSV layout (one row per line item; invoices
+  with no line items emit a single summary row at the invoice total). Customer
+  resolved from client company → client name → `job# - project` fallback.
+  `line_type` mapped to QBO product/service items. Read-only.
+- `__init__.py`: integrations package docstring.
+
+### Config
+- New `ENABLE_QBO_EXPORT` feature flag (default off) + `_flag()` env-var
+  boolean helper in `config.py`.
+
+### Tests
+- `tests/test_qbo_export.py` (9 tests): empty→header-only, one-row-per-line-item
+  mapping, summary row, status filter, id filter, customer fallback chain,
+  fractional-quantity formatting, no-mutation guard, stable ordering.
+
 ## Bank CSV Import (Phase 0) -- 2026-05-24
 
 Bank of America CSV import pipeline for the Accounting page. Phase 0 of the bank integration roadmap (CSV first, Plaid later). Ships immediate value: transactions auto-categorize on upload using the existing 40+ VBA-ported rules engine.
