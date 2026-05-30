@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import empty_state
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -387,7 +388,7 @@ with tab_permits:
 
     # --- Permit list ---
     if not permits:
-        st.info("No permits found matching your filters.")
+        empty_state("No permits found matching your filters.")
     else:
         st.markdown(f"**{len(permits)} permit{'s' if len(permits) != 1 else ''}**")
 
