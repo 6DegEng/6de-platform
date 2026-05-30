@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap
@@ -171,7 +172,7 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 # Page header
 # ---------------------------------------------------------------------------
-st.title("Government Bids & Subconsultants")
+page_header("Government Bids & Subconsultants", "Solicitations & teaming", "📑")
 st.caption("Solicitation tracking, vendor management, and purchase orders")
 
 # ---------------------------------------------------------------------------

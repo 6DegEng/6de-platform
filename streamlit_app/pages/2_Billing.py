@@ -10,6 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — ensure the platform root is on sys.path
@@ -107,7 +108,7 @@ if overdue_count:
 # ---------------------------------------------------------------------------
 # Page header
 # ---------------------------------------------------------------------------
-st.title("Billing & Invoicing")
+page_header("Billing & Invoicing", "Invoices, proposals & accounts receivable", "💳")
 st.caption("6th Degree Engineering - Financial Overview")
 
 # ---------------------------------------------------------------------------

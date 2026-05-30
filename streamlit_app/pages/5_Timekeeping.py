@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap
@@ -117,7 +118,7 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 # Page header
 # ---------------------------------------------------------------------------
-st.title("Timekeeping & Expenses")
+page_header("Timekeeping & Expenses", "Hours, rates & reimbursables", "⏱️")
 st.caption("6th Degree Engineering - Time Tracking & Cost Management")
 
 # ---------------------------------------------------------------------------

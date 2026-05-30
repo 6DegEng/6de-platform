@@ -23,6 +23,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 import pandas as pd
 import streamlit as st
+from streamlit_app.components.branding import page_header
 
 from db import ensure_db
 from modules.dashboard.queries import get_dashboard_data
@@ -131,7 +132,7 @@ st.markdown(
 
 with st.sidebar:
     show_logout_button()
-    st.markdown("# 6th Degree Engineering")
+    page_header("6th Degree Engineering", "Company operations dashboard", "🏛️")
     st.caption("ERP Platform v3.5")
     st.divider()
 
