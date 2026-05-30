@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from datetime import date, datetime
@@ -105,9 +106,10 @@ def _float_val(value: Any) -> float | None:
     if value is None:
         return None
     try:
-        return float(value)
+        f = float(value)
     except (ValueError, TypeError):
         return None
+    return None if math.isnan(f) or math.isinf(f) else f
 
 
 # ---------------------------------------------------------------------------

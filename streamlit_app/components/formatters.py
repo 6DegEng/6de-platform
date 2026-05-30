@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Optional
 
@@ -13,9 +14,10 @@ from typing import Optional
 def format_currency(amount: float | int | None) -> str:
     """Format a numeric amount as USD with commas and two decimals.
 
-    Returns "$0.00" for None / zero.
+    Returns "$0.00" for None / zero / NaN (a NaN contract value is unknown, not
+    a real figure, so it must never render as the literal "$nan").
     """
-    if amount is None:
+    if amount is None or (isinstance(amount, float) and math.isnan(amount)):
         return "$0.00"
     return f"${amount:,.2f}"
 
@@ -33,7 +35,7 @@ def format_currency_compact(amount: float | int | None) -> str:
 
     Used on cards that previously truncated to "$157,..." (A3 fix).
     """
-    if amount is None:
+    if amount is None or (isinstance(amount, float) and math.isnan(amount)):
         return "$0"
     a = float(amount)
     sign = "-" if a < 0 else ""

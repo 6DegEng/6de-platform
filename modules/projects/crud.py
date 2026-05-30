@@ -14,7 +14,7 @@ import sqlite3
 from datetime import date, datetime, timezone
 from typing import Any
 
-from modules.activity_utils import sanitize_details
+from modules.activity_utils import nan_to_none, sanitize_details
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +114,7 @@ def create_project(conn: sqlite3.Connection, **kwargs: Any) -> int:
     if "folder_path" not in kwargs and "name" in kwargs:
         kwargs["folder_path"] = f"{kwargs['job_number']} - {kwargs['name']}"
 
+    kwargs = {k: nan_to_none(v) for k, v in kwargs.items()}
     columns = ", ".join(kwargs.keys())
     placeholders = ", ".join("?" for _ in kwargs)
     values = list(kwargs.values())
@@ -170,6 +171,7 @@ def update_project(
             kwargs["percent_complete"]
         )
 
+    kwargs = {k: nan_to_none(v) for k, v in kwargs.items()}
     kwargs["updated_at"] = _now()
     set_clause = ", ".join(f"{k} = ?" for k in kwargs)
     values = list(kwargs.values()) + [project_id]

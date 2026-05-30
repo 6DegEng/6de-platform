@@ -9,6 +9,7 @@ Idempotent: uses INSERT OR REPLACE keyed on unique columns.
 """
 from __future__ import annotations
 
+import math
 import re
 import sys
 from datetime import datetime
@@ -60,13 +61,18 @@ def _iso(value) -> str | None:
 
 
 def _float(value) -> float | None:
-    """Safely coerce a cell value to float."""
+    """Safely coerce a cell value to float; blanks/NaN -> None.
+
+    pandas reads empty cells as float('nan'), and float('nan') succeeds, so the
+    isnan guard is what keeps a blank contract value out of the DB as NaN.
+    """
     if value is None:
         return None
     try:
-        return float(value)
+        f = float(value)
     except (ValueError, TypeError):
         return None
+    return None if math.isnan(f) or math.isinf(f) else f
 
 
 def _text(value) -> str | None:
