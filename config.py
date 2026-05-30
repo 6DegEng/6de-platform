@@ -71,6 +71,10 @@ ENABLE_QBO_EXPORT = _flag("ENABLE_QBO_EXPORT", False)
 # See modules/integrations/delivery_email.py and docs/roadmap/integrations.md #2.
 ENABLE_DELIVERY_EMAIL = _flag("ENABLE_DELIVERY_EMAIL", False)
 
+# Slack notification on client-facing / internal project updates (composed only —
+# no webhook POST here). See modules/integrations/slack.py + docs/roadmap/integrations.md #3.
+ENABLE_SLACK_NOTIFY = _flag("ENABLE_SLACK_NOTIFY", False)
+
 # ---------------------------------------------------------------------------
 # Local SQLite path — OUT of OneDrive sync by default to avoid lock cascades.
 # ---------------------------------------------------------------------------

@@ -1,5 +1,24 @@
 # Changelog
 
+## Slack project-update notification (Phase 0 — composition) -- 2026-05-31
+
+Third integrations slice (docs/roadmap/integrations.md #3), stacked on the
+delivery-email branch. Credential-free, composition-only — no webhook POST.
+
+### Module (modules/integrations/slack.py)
+- should_notify(category): only client_communication / internal_note notify.
+- compose_slack_message(conn, update_id): Block Kit payload (header+section+context)
+  + text fallback for a notifiable update; None otherwise.
+- find_notifiable_updates(conn, project_id=None): future-sweep helper.
+
+### Config
+- New ENABLE_SLACK_NOTIFY feature flag (default off).
+
+### Tests
+- tests/test_slack_notify.py (11 tests): category filter, payload shape/content,
+  not-notifiable + missing guards, sweep filter/scoping.
+
+
 ## Delivery-milestone email (Phase 0 — composition) -- 2026-05-30
 
 Second integrations slice (`docs/roadmap/integrations.md` #2). Credential-free,
