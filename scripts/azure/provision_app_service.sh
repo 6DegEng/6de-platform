@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# =============================================================================
+# 6DE Platform — Azure App Service provisioning (Phase 8 hosting flip)
+# =============================================================================
+# Idempotent: safe to re-run. Each step checks for the resource before creating.
+# Run AFTER the App Service "Total VMs" / regional vCPU quota is approved in
+# eastus2 (see QUOTA note below). Everything else (RG, Postgres, KV, ACR,
+# Storage, App Insights, Log Analytics) is already provisioned.
+#
+# Prereqs:
+#   - az login   (account: juan@6de.xyz, subscription "6DE Production")
+#   - The container image must exist in ACR:
+#       az acr build --registry sixdeacrjc --image 6de-platform:latest --file Dockerfile .
+#     (On a cp1252 Windows console, prefix with PYTHONIOENCODING=utf-8 to avoid
+#      a client-side colorama UnicodeEncodeError while streaming build logs —
+#      the build itself still runs server-side regardless.)
+#
+# QUOTA (the current blocker, 2026-05-29):
+#   `az appservice plan create ... --sku B2` fails with
+#     "Current Limit (Total VMs): 0 ... required: 1".
+#   App Service Linux Basic needs a regional "Total VMs" / vCPU quota > 0 in
+#   eastus2. Request it in Portal → Subscription "6DE Production" → Usage+quotas
+#   → filter region=East US 2, provider=Microsoft.Web (App Service), and raise
+#   the App Service vCPU/instance limit to >= 2 (B2 = 2 vCPU). NOTE: the
+#   "Standard BS Family vCPUs" line in `az vm list-usage` is NOT the gating
+#   quota for App Service — it is a separate dimension and was a red herring.
+# =============================================================================
+set -euo pipefail
+
+# --- Canonical environment (from CLAUDE_CODE_RESUME_PROMPT.md) ----------------
+RG=6de-platform-rg
+LOC=eastus2
+ACR_NAME=sixdeacrjc
+KV_NAME=sixde-kv-jc
+STORAGE_NAME=sixdeplatformjc
+PG_NAME=sixde-platform-db-jc
+APP_NAME=6de-platform-jc
+APP_PLAN=6de-platform-plan
+IMAGE="${ACR_NAME}.azurecr.io/6de-platform:latest"
+PG_ADMIN_USER=sixdeadmin
+
+echo "==> Subscription: $(az account show --query name -o tsv)"
+
+# --- 1. App Service Plan (B2 Linux) ------------------------------------------
+if az appservice plan show -g "$RG" -n "$APP_PLAN" >/dev/null 2>&1; then
+  echo "==> Plan $APP_PLAN already exists — skipping."
+else
+  echo "==> Creating App Service Plan $APP_PLAN (B2 Linux)..."
+  az appservice plan create -g "$RG" -n "$APP_PLAN" -l "$LOC" --is-linux --sku B2
+fi
+
+# --- 2. Web App (from ACR image) ---------------------------------------------
+if az webapp show -g "$RG" -n "$APP_NAME" >/dev/null 2>&1; then
+  echo "==> Web App $APP_NAME already exists — skipping create."
+else
+  echo "==> Creating Web App $APP_NAME from $IMAGE ..."
+  az webapp create -g "$RG" -p "$APP_PLAN" -n "$APP_NAME" \
+    --deployment-container-image-name "$IMAGE"
+fi
+
+# --- 3. System-assigned managed identity -------------------------------------
+echo "==> Ensuring system-assigned managed identity..."
+PRINCIPAL_ID=$(az webapp identity assign -g "$RG" -n "$APP_NAME" \
+  --query principalId -o tsv)
+echo "    principalId=$PRINCIPAL_ID"
+
+# --- 4. Role assignments (RBAC) ----------------------------------------------
+# ACR pull (admin user is disabled on the registry — identity is the path).
+ACR_ID=$(az acr show -n "$ACR_NAME" --query id -o tsv)
+echo "==> Granting AcrPull on $ACR_NAME ..."
+az role assignment create --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role AcrPull --scope "$ACR_ID" 2>/dev/null \
+  || echo "    (AcrPull already assigned)"
+
+# Key Vault uses RBAC (enableRbacAuthorization=true) — grant Secrets User.
+KV_ID=$(az keyvault show -n "$KV_NAME" --query id -o tsv)
+echo "==> Granting 'Key Vault Secrets User' on $KV_NAME ..."
+az role assignment create --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal \
+  --role "Key Vault Secrets User" --scope "$KV_ID" 2>/dev/null \
+  || echo "    (Secrets User already assigned)"
+
+# Tell the web app to pull from ACR using the managed identity.
+echo "==> Pointing Web App at ACR via managed identity..."
+az webapp config set -g "$RG" -n "$APP_NAME" --generic-configurations \
+  '{"acrUseManagedIdentityCreds": true}' >/dev/null
+
+# --- 5. App settings ----------------------------------------------------------
+# WEBSITES_PORT must match the container's Streamlit port (8000, per Dockerfile).
+# Secrets are pulled from Key Vault via references so they never live in config.
+# KV refs require the secrets to exist: postgres-admin-password (present), and
+# (to be added) auth-config-yaml + platform-database-url. Until those exist,
+# the app boots on SQLite and the login page degrades gracefully; /_stcore/health
+# is the Streamlit server liveness check and returns 200 once the container runs.
+echo "==> Setting app settings..."
+az webapp config appsettings set -g "$RG" -n "$APP_NAME" --settings \
+  WEBSITES_PORT=8000 \
+  STREAMLIT_SERVER_PORT=8000 \
+  STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
+  STREAMLIT_SERVER_HEADLESS=true \
+  STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+  DB_BACKEND=sqlite \
+  PLATFORM_DB_PATH=/home/data/platform.db \
+  AUTH_CONFIG_PATH=/home/secrets/auth_config.yaml \
+  APPLICATIONINSIGHTS_CONNECTION_STRING="@Microsoft.KeyVault(VaultName=${KV_NAME};SecretName=appinsights-connection-string)" \
+  >/dev/null
+# NOTE: /home is the App Service persistent share — survives restarts. For the
+# Postgres flip, set DB_BACKEND=postgres and
+# PLATFORM_DATABASE_URL="@Microsoft.KeyVault(VaultName=${KV_NAME};SecretName=platform-database-url)".
+
+# --- 6. Restart + verify ------------------------------------------------------
+echo "==> Restarting to pull the image..."
+az webapp restart -g "$RG" -n "$APP_NAME"
+
+HOST=$(az webapp show -g "$RG" -n "$APP_NAME" --query defaultHostName -o tsv)
+echo "==> Web App host: https://${HOST}"
+echo "==> Waiting for container to start (cold pull can take 1-3 min)..."
+for i in $(seq 1 18); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" "https://${HOST}/_stcore/health" || true)
+  echo "    [$i] /_stcore/health -> ${code}"
+  if [ "$code" = "200" ]; then echo "==> HEALTHY ✓"; break; fi
+  sleep 10
+done
+
+echo
+echo "==> Verify block:"
+az appservice plan show -g "$RG" -n "$APP_PLAN" --query "{state:provisioningState,sku:sku.name}" -o json
+az webapp show -g "$RG" -n "$APP_NAME" --query "{state:state,host:defaultHostName}" -o json
+echo "Done. If health != 200, check logs: az webapp log tail -g $RG -n $APP_NAME"
