@@ -1,6 +1,6 @@
 # 6DE Company Platform
 
-Internal ERP for **6th Degree Engineering** — Streamlit + SQLite (Postgres at Phase 8). Tracks projects, proposals, permits, billing, calc-engine output, accounting, time, bids, CRM.
+Internal ERP for **6th Degree Engineering** — Streamlit + SQLite (Azure Database for PostgreSQL at Phase 8). Tracks projects, proposals, permits, billing, calc-engine output, accounting, time, bids, CRM.
 
 **Current phase:** Phase 1 — cloud prerequisites (no deploy yet). See `PLATFORM_GOAL_v1.md` for the full roadmap.
 
@@ -62,7 +62,7 @@ The startup banner from `python launch_platform.py` prints the resolved values �
 ├── PLATFORM_GOAL_v1.md           # Phased roadmap, approved 2026-05-12
 ├── CHANGELOG.md                   # Session-by-session change log
 ├── README.md                      # This file
-├── Dockerfile / .dockerignore     # Container build (Phase 8 hosting prep)
+├── Dockerfile / .dockerignore     # Container build (Phase 8 hosting prep — Azure App Service for Linux)
 ├── .github/workflows/ci.yml       # Lint + smoke-import on every push
 ├── .gitignore                     # Excludes secrets, DB, research artifacts
 ├── config.py                      # All env-var-driven paths
@@ -105,7 +105,7 @@ The startup banner from `python launch_platform.py` prints the resolved values �
 
 ## Database
 
-The platform uses SQLite locally and is preparing for Postgres at Phase 8.
+The platform uses SQLite locally and is preparing for Postgres at Phase 8 (Azure Database for PostgreSQL flexible server, `sixde-platform-db-jc`).
 
 ### Where the DB file lives
 
@@ -139,9 +139,9 @@ Both are idempotent — re-running them only inserts what's new.
 
 ---
 
-## Docker (Phase 8 prep)
+## Docker (Phase 8 prep — Azure App Service)
 
-A Dockerfile is in the repo so production deploy (Phase 8) is a flip, not a rewrite. Local Docker is **not** required for dev — use `python launch_platform.py` instead.
+A Dockerfile is in the repo so production deploy (Phase 8) is a flip, not a rewrite. The production target is **Azure App Service for Linux**, pulling the container image from **Azure Container Registry** (`sixdeacrjc.azurecr.io`). Local Docker is **not** required for dev — use `python launch_platform.py` instead.
 
 ```powershell
 # Build
@@ -158,7 +158,7 @@ docker run -p 8000:8000 `
 # App at http://localhost:8000
 ```
 
-At Phase 8 (Render), the volume becomes a Render Persistent Disk, auth is mounted from Render Secrets, and `DB_BACKEND` flips to `postgres` with `PLATFORM_DATABASE_URL` pointing at Neon.
+At Phase 8 (Azure), persistent data moves to **Azure Database for PostgreSQL flexible server** (`sixde-platform-db-jc`) and **Azure Blob Storage** (`sixdeplatformjc`), auth and connection secrets are mounted from **Azure Key Vault** (`sixde-kv-jc`) via the App Service managed identity, and `DB_BACKEND` flips to `postgres` with `PLATFORM_DATABASE_URL` pointing at the Azure Postgres server. See `Feature_Research/Hosting_and_Integration_Roadmap.md` for the canonical Azure provisioning plan.
 
 ---
 

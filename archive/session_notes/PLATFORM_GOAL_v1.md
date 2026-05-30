@@ -257,6 +257,16 @@ The original phase plan executed Postgres+Render second (right after foundation)
 ---
 
 ### Phase 8 — Postgres + Render Deploy *(FINAL STEP, not the second)*
+
+> **⚠️ SUPERSEDED 2026-05-29 — hosting target changed to Azure.** The Render + Neon
+> plan described in this section was the original Phase 8 design. The canonical
+> production target is now **Azure App Service for Linux** + **Azure Database for
+> PostgreSQL flexible server** (`sixde-platform-db-jc`) + **Azure Blob Storage** +
+> **Azure Key Vault**, pulling the container image from **Azure Container Registry**
+> (`sixdeacrjc.azurecr.io`). See `Feature_Research/Hosting_and_Integration_Roadmap.md`
+> for the current provisioning plan. The Render/Neon steps below are retained as a
+> historical record of the original decision and should not be executed as written.
+
 **Goal:** Platform lives on the internet, real Postgres backend. SQLite-on-OneDrive eliminated.
 
 **Acceleration trigger:** If hire #2 lands while Phases 2–6 are still in progress, Phase 8 jumps the queue ahead of the remaining feature work. Hire #2 needs cloud access; hire #2 doesn't need every feature shipped.
