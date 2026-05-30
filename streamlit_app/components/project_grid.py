@@ -106,8 +106,15 @@ DENSITY_OPTIONS: dict[str, int] = {
 
 
 # ---------------------------------------------------------------------------
-# JsCode cell renderer that paints the status cell with the pill palette.
+# JsCode cell renderers that paint the cell with the pill palette.
 # Drawn entirely client-side; no HTML round-trip on every edit.
+#
+# IMPORTANT: AG Grid v32+ (bundled v34 in streamlit-aggrid 1.2.x) assigns a
+# cellRenderer function's *string* return value via ``element.textContent`` —
+# so returning raw HTML markup shows up as literal escaped text in the cell
+# (e.g. ``<span style="...">``). To render HTML we MUST return a DOM element
+# and set ``innerHTML`` on it ourselves. Each renderer below therefore builds
+# a ``<span>``/``<div>`` element and returns the element, not a string.
 # ---------------------------------------------------------------------------
 def _build_status_renderer() -> JsCode:
     color_map_js = "{" + ", ".join(
@@ -127,9 +134,11 @@ def _build_status_renderer() -> JsCode:
             const bg = colors[value] || '#6c757d';
             const fg = darkText.includes(value) ? '#111827' : '#ffffff';
             const label = labels[value] || value;
-            return `<span style="background:${{bg}};color:${{fg}};` +
+            const el = document.createElement('span');
+            el.innerHTML = `<span style="background:${{bg}};color:${{fg}};` +
                    `padding:2px 10px;border-radius:10px;font-size:0.85em;` +
                    `font-weight:600;">${{label}}</span>`;
+            return el;
         }}
         """
     )
@@ -151,8 +160,10 @@ def _build_priority_renderer() -> JsCode:
             if (!value) return '';
             const color = colors[value] || '#6B7280';
             const label = labels[value] || value;
-            return `<span style="color:${{color}};font-weight:600;` +
+            const el = document.createElement('span');
+            el.innerHTML = `<span style="color:${{color}};font-weight:600;` +
                    `font-size:0.85em;">● ${{label}}</span>`;
+            return el;
         }}
         """
     )
@@ -167,10 +178,12 @@ def _build_percent_renderer() -> JsCode:
             const pct = Math.round(Number(val));
             const width = Math.min(100, Math.max(0, pct));
             const color = pct >= 100 ? '#22C55E' : pct >= 50 ? '#3B82F6' : '#F59E0B';
-            return `<div style="display:flex;align-items:center;gap:6px;">` +
+            const el = document.createElement('div');
+            el.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">` +
                    `<div style="flex:1;background:#e5e7eb;border-radius:4px;height:8px;">` +
                    `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
                    `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
+            return el;
         }
         """
     )
@@ -354,9 +367,11 @@ def _build_bucket_renderer() -> JsCode:
             if (!value) return '';
             const bg = colors[value] || '#6c757d';
             const label = labels[value] || value;
-            return `<span style="background:${{bg}};color:#fff;` +
+            const el = document.createElement('span');
+            el.innerHTML = `<span style="background:${{bg}};color:#fff;` +
                    `padding:2px 8px;border-radius:8px;font-size:0.8em;` +
                    `font-weight:500;">${{label}}</span>`;
+            return el;
         }}
         """
     )
