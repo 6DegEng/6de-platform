@@ -53,6 +53,21 @@ DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite").lower()
 PLATFORM_DATABASE_URL = os.environ.get("PLATFORM_DATABASE_URL")
 
 # ---------------------------------------------------------------------------
+# Integration feature flags (off by default — opt in per-environment)
+# ---------------------------------------------------------------------------
+def _flag(name: str, default: bool = False) -> bool:
+    """Parse a boolean env var ('1', 'true', 'yes', 'on' → True)."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# QuickBooks Online invoice export (CSV). Pure data transform, no credentials.
+# See modules/integrations/quickbooks.py and docs/roadmap/integrations.md.
+ENABLE_QBO_EXPORT = _flag("ENABLE_QBO_EXPORT", False)
+
+# ---------------------------------------------------------------------------
 # Local SQLite path — OUT of OneDrive sync by default to avoid lock cascades.
 # ---------------------------------------------------------------------------
 def _default_db_dir() -> Path:
