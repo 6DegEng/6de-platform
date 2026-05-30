@@ -69,6 +69,14 @@ def require_auth() -> None:
     Shows a login form if the user is not authenticated.
     Calls ``st.stop()`` to prevent the rest of the page from rendering.
     """
+    # Inject the 6DE design-system theme on every page (and the login screen).
+    # Presentation only; never let a theming hiccup block authentication.
+    try:
+        from streamlit_app.components.branding import load_theme
+        load_theme()
+    except Exception:
+        pass
+
     authenticator = _get_authenticator()
 
     authenticator.login()

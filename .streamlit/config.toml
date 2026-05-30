@@ -1,0 +1,13 @@
+# 6DE Platform theme — warm "command center" dark, brand-orange accent.
+# This alone recolors all primary buttons from Streamlit's default red (#FF4B4B)
+# to brand orange and warms the base; theme.css (loaded per page) adds Inter + chrome.
+[theme]
+base = "dark"
+primaryColor = "#B8410F"
+backgroundColor = "#15120F"
+secondaryBackgroundColor = "#211B15"
+textColor = "#EFE9E2"
+font = "sans serif"
+
+[server]
+headless = true
