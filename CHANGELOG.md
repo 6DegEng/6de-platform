@@ -1,5 +1,18 @@
 # Changelog
 
+## Fix: deterministic portfolio mirror change-detection -- 2026-05-30
+
+`modules/mirror/sync.py` hashed the rendered **.xlsx bytes** for portfolio
+change detection. openpyxl bakes wall-clock ZIP member timestamps into the
+saved file, so two renders of identical data are not byte-identical once a
+one-second boundary is crossed — causing the portfolio to be re-uploaded on
+most syncs and intermittently failing `test_sync_all_unchanged_on_second_run`
+in full-suite runs (it passed in isolation when both renders landed in the same
+second). Change detection now hashes a **canonical serialization of the inputs**
+(`_portfolio_digest`: projects + base_url + platform_version + today) instead of
+the volatile binary. Added 3 regression tests, incl. one that monkeypatches the
+renderer to drift its bytes and asserts the second sync is still `unchanged`.
+
 ## Bank CSV Import (Phase 0) -- 2026-05-24
 
 Bank of America CSV import pipeline for the Accounting page. Phase 0 of the bank integration roadmap (CSV first, Plaid later). Ships immediate value: transactions auto-categorize on upload using the existing 40+ VBA-ported rules engine.
