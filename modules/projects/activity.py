@@ -194,6 +194,13 @@ def _project_summary(action: str, details: dict) -> str:
     if action == "update_deleted":
         return "Update removed"
 
+    if action == "mirror_uploaded":
+        file_name = details.get("file", "snapshot")
+        status_val = details.get("status", "")
+        if status_val == "unchanged":
+            return f"Mirror unchanged ({file_name})"
+        return f"Mirror uploaded ({file_name})"
+
     return f"{action.replace('_', ' ').title()}"
 
 

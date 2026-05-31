@@ -34,7 +34,7 @@ How legacy xlsx status strings map to the platform's 10-value status enum.
 | Urgent       | `urgent`      | Direct match                               |
 | On Hold      | `normal`      | "On Hold" is a status, not a priority level |
 
-## Lifecycle Buckets (future)
+## Lifecycle Buckets
 
 Mature Monday-style trackers group rows into lifecycle buckets that
 drive board sections. The mapping from platform status to bucket:
@@ -48,5 +48,8 @@ drive board sections. The mapping from platform status to bucket:
 | LOST       | `cancelled`                                                 |
 | ARCHIVED   | `archived`                                                  |
 
-This grouping is documented here for reference. The `lifecycle_bucket`
-column does not exist yet — see the TODO in `modules/projects/workflow.py`.
+The mapping is implemented in `modules/status_colors.py` as `STATUS_TO_BUCKET`.
+The `lifecycle_bucket` value is not persisted on the `projects` table — it is
+computed at read time in `streamlit_app/components/project_grid.py`
+(`projects_to_dataframe`) and surfaces in the AgGrid table view as a sortable
+/ groupable column.
