@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_app.components.branding import empty_state
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path bootstrap
@@ -54,7 +56,7 @@ conn = ensure_db()
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.title("Financials")
+page_header("Financials", "Cashflow, AR aging & forecasts", "📈")
 st.caption("6th Degree Engineering - Financial Analytics & Reporting")
 st.info(
     "**Invoice / accrual basis** -- what has been billed. "
@@ -194,7 +196,7 @@ with tab_aging:
             hide_index=True,
         )
     else:
-        st.info("No outstanding invoices in the aging report.")
+        empty_state("No outstanding invoices in the aging report.")
 
 # ========================== TAB 2: PROFITABILITY ==========================
 with tab_profit:
@@ -280,9 +282,9 @@ with tab_profit:
                 hide_index=True,
             )
         else:
-            st.info("No client profitability data available.")
+            empty_state("No client profitability data available.")
     else:
-        st.info("No project profitability data available.")
+        empty_state("No project profitability data available.")
 
 # ============================ TAB 3: UTILIZATION ==========================
 with tab_util:
@@ -371,9 +373,9 @@ with tab_util:
             df_monthly = df_monthly.set_index("Month")
             st.bar_chart(df_monthly)
         else:
-            st.info("No time entry data for the selected period.")
+            empty_state("No time entry data for the selected period.")
     else:
-        st.info("No time entries found for the selected date range.")
+        empty_state("No time entries found for the selected date range.")
 
 # ============================== TAB 4: REVENUE ============================
 with tab_revenue:
@@ -434,7 +436,7 @@ with tab_revenue:
             hide_index=True,
         )
     else:
-        st.info(f"No paid invoices found for {rev_year}.")
+        empty_state(f"No paid invoices found for {rev_year}.")
 
     # Pipeline forecast section
     st.markdown("---")

@@ -1,0 +1,135 @@
+/* 6DE Platform design system — "VIP office" warm-dark, brand-orange.
+   Loaded on every page via components.branding.load_theme(). Presentation only. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --6de-accent: #B8410F;
+  --6de-accent-dark: #6d3115;
+  --6de-accent-soft: rgba(184, 65, 15, 0.14);
+  --6de-bg: #15120F;
+  --6de-panel: #211B15;
+  --6de-panel-2: #2A231C;
+  --6de-border: #3a3128;
+  --6de-ink: #EFE9E2;
+  --6de-muted: #B9AFA3;
+  --6de-font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Inter everywhere */
+html, body, [class*="css"], .stApp, [data-testid="stAppViewContainer"],
+button, input, textarea, select, .stMarkdown, h1, h2, h3, h4, h5, h6 {
+  font-family: var(--6de-font) !important;
+}
+
+.stApp { background: var(--6de-bg); }
+
+/* Kill any residual Streamlit default red (#FF4B4B) on buttons; brand-orange primary. */
+.stButton > button[kind="primary"],
+.stButton > button[data-testid="baseButton-primary"],
+.stFormSubmitButton > button {
+  background: var(--6de-accent) !important;
+  border: 1px solid var(--6de-accent) !important;
+  color: #fff !important;
+  font-weight: 600;
+  border-radius: 9px;
+}
+.stButton > button[kind="primary"]:hover,
+.stFormSubmitButton > button:hover { background: var(--6de-accent-dark) !important; border-color: var(--6de-accent-dark) !important; }
+
+/* Secondary buttons: warm outline */
+.stButton > button[kind="secondary"], .stButton > button:not([kind="primary"]) {
+  background: var(--6de-panel) !important;
+  border: 1px solid var(--6de-border) !important;
+  color: var(--6de-ink) !important;
+  border-radius: 9px;
+}
+.stButton > button:hover { border-color: var(--6de-accent) !important; color: #fff !important; }
+
+/* Inputs */
+input, textarea, [data-baseweb="input"], [data-baseweb="select"] > div, .stTextInput input, .stNumberInput input, .stDateInput input {
+  background: var(--6de-panel) !important;
+  border-radius: 8px !important;
+}
+input:focus, textarea:focus { border-color: var(--6de-accent) !important; box-shadow: 0 0 0 2px var(--6de-accent-soft) !important; }
+
+/* Tabs — brand underline on the active tab */
+.stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { background-color: var(--6de-accent) !important; }
+.stTabs [aria-selected="true"] { color: var(--6de-accent) !important; }
+
+/* Radios / checkboxes accent */
+[data-baseweb="radio"] [aria-checked="true"] svg, input[type="radio"], input[type="checkbox"] { accent-color: var(--6de-accent); }
+
+/* Links */
+a, a:visited { color: var(--6de-accent); }
+a:hover { color: var(--6de-accent-dark); }
+
+/* Metric / KPI cards */
+[data-testid="stMetric"] {
+  background: var(--6de-panel);
+  border: 1px solid var(--6de-border);
+  border-left: 3px solid var(--6de-accent);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+[data-testid="stMetricValue"] { color: var(--6de-ink); font-weight: 700; }
+[data-testid="stMetricLabel"] { color: var(--6de-muted); }
+
+/* Dataframes */
+[data-testid="stDataFrame"], .stDataFrame { border: 1px solid var(--6de-border); border-radius: 10px; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--6de-border); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--6de-accent-dark); }
+
+/* Sidebar */
+[data-testid="stSidebar"] { background: var(--6de-panel); border-right: 1px solid var(--6de-border); }
+
+/* ---- Shared component chrome (used by components.branding) ---- */
+.de-page-header { display: flex; align-items: center; gap: 14px; margin: 4px 0 18px; padding-bottom: 14px; border-bottom: 1px solid var(--6de-border); }
+.de-page-header .de-ph-icon { font-size: 30px; line-height: 1; }
+.de-page-header h1 { font-family: var(--6de-font) !important; font-size: 27px; font-weight: 700; margin: 0; color: var(--6de-ink); letter-spacing: -0.01em; }
+.de-page-header p { margin: 3px 0 0; color: var(--6de-muted); font-size: 14px; }
+.de-section-card { background: var(--6de-panel); border: 1px solid var(--6de-border); border-left: 3px solid var(--6de-accent); border-radius: 12px; padding: 18px 20px; margin: 8px 0 16px; }
+.de-section-card > h3 { margin: 0 0 12px; font-size: 16px; color: var(--6de-ink); font-weight: 600; }
+.de-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--6de-accent-soft); color: var(--6de-accent); border: 1px solid var(--6de-accent); }
+.de-empty { text-align: center; color: var(--6de-muted); border: 1px dashed var(--6de-border); border-radius: 12px; padding: 40px 20px; }
+
+/* ---- "VIP office" ambience (subtle; keeps AA contrast) ---- */
+/* Warm radial wash in the app background + a faint blueprint-grid watermark.
+   TODO(Juan): for a true logo watermark, drop a web-ready faint mono SVG/PNG of
+   the 6DE mark into streamlit_app/assets/ and set it as a low-opacity
+   background-image here. Gradient + grid below ship in the meantime. */
+[data-testid="stAppViewContainer"] > .main,
+section[data-testid="stMain"] {
+  background:
+    radial-gradient(1100px 600px at 82% -8%, rgba(184, 65, 15, 0.10), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(109, 49, 21, 0.10), transparent 55%),
+    linear-gradient(0deg, rgba(255,255,255,0.012), rgba(255,255,255,0.012)),
+    var(--6de-bg);
+}
+/* faint engineering-grid watermark */
+section[data-testid="stMain"]::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(184,65,15,0.030) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(184,65,15,0.030) 1px, transparent 1px);
+  background-size: 46px 46px;
+}
+section[data-testid="stMain"] .block-container { position: relative; z-index: 1; }
+
+/* Sidebar: polished brand lockup + warm section labels */
+[data-testid="stSidebarNav"]::before,
+[data-testid="stSidebar"] .de-sidebar-brand {
+  color: var(--6de-accent);
+}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2 { color: var(--6de-ink); }
+/* sidebar section header labels (markdown bold) in brand tone */
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] strong { color: var(--6de-accent); letter-spacing: 0.02em; }
+[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]:hover { background: var(--6de-accent-soft); border-radius: 8px; }
+/* sidebar footer rule */
+[data-testid="stSidebar"]::after {
+  content: "6th Degree Engineering · PE 98059 · CGC 1538618";
+  display: block; padding: 14px 16px; margin-top: 8px;
+  font-size: 11px; color: var(--6de-muted); border-top: 1px solid var(--6de-border);
+}

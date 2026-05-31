@@ -62,6 +62,18 @@ Credential-free, pure data transform — no QBO API yet.
 - `tests/test_qbo_export.py` (9 tests): empty→header-only, one-row-per-line-item
   mapping, summary row, status filter, id filter, customer fallback chain,
   fractional-quantity formatting, no-mutation guard, stable ordering.
+## Fix: deterministic portfolio mirror change-detection -- 2026-05-30
+
+`modules/mirror/sync.py` hashed the rendered **.xlsx bytes** for portfolio
+change detection. openpyxl bakes wall-clock ZIP member timestamps into the
+saved file, so two renders of identical data are not byte-identical once a
+one-second boundary is crossed — causing the portfolio to be re-uploaded on
+most syncs and intermittently failing `test_sync_all_unchanged_on_second_run`
+in full-suite runs (it passed in isolation when both renders landed in the same
+second). Change detection now hashes a **canonical serialization of the inputs**
+(`_portfolio_digest`: projects + base_url + platform_version + today) instead of
+the volatile binary. Added 3 regression tests, incl. one that monkeypatches the
+renderer to drift its bytes and asserts the second sync is still `unchanged`.
 
 ## Bank CSV Import (Phase 0) -- 2026-05-24
 
