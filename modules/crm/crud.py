@@ -21,6 +21,13 @@ from modules.activity_utils import sanitize_details
 
 STAGES = ("lead", "qualifying", "proposal_sent", "negotiating", "won", "lost", "dormant")
 
+# "Active" = open pipeline stages only. Excludes the three terminal/closed
+# stages (won = closed-won, lost = closed-lost, dormant = parked/inactive).
+# This is the single source of truth for what the "Active Opportunities" KPI
+# counts, so the KPI and any "active" list header agree by definition.
+ACTIVE_STAGES = ("lead", "qualifying", "proposal_sent", "negotiating")
+CLOSED_STAGES = ("won", "lost", "dormant")
+
 SERVICE_LINES = (
     "structural", "civil", "sirs", "forensics", "pools",
     "recertification", "threshold", "government", "other",
@@ -260,14 +267,16 @@ def get_pipeline_summary(conn: sqlite3.Connection) -> dict[str, Any]:
             "active_count": 12,
         }
     """
+    placeholders = ", ".join("?" for _ in ACTIVE_STAGES)
     rows = conn.execute(
         "SELECT stage, "
         "       COUNT(*) AS count, "
         "       COALESCE(SUM(estimated_value), 0) AS total_value, "
         "       COALESCE(SUM(estimated_value * probability / 100.0), 0) AS weighted_value "
         "FROM opportunities "
-        "WHERE stage NOT IN ('lost', 'dormant') "
-        "GROUP BY stage"
+        f"WHERE stage IN ({placeholders}) "  # noqa: S608 — placeholders are constant
+        "GROUP BY stage",
+        ACTIVE_STAGES,
     ).fetchall()
 
     by_stage: dict[str, dict[str, Any]] = {}
@@ -291,6 +300,22 @@ def get_pipeline_summary(conn: sqlite3.Connection) -> dict[str, Any]:
         "weighted_pipeline_total": weighted_total,
         "active_count": active_count,
     }
+
+
+def count_active_opportunities(conn: sqlite3.Connection) -> int:
+    """Return the number of opportunities in an *active* (open) stage.
+
+    Active stages are defined by :data:`ACTIVE_STAGES` — every stage except
+    the closed/terminal ones (won, lost, dormant). This is the canonical query
+    behind the "Active Opportunities" KPI; the pipeline page uses the same
+    constant to label its "Active" list, so the two provably agree.
+    """
+    placeholders = ", ".join("?" for _ in ACTIVE_STAGES)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM opportunities WHERE stage IN ({placeholders})",  # noqa: S608
+        ACTIVE_STAGES,
+    ).fetchone()
+    return row["cnt"]
 
 
 def get_win_loss_stats(
