@@ -177,7 +177,7 @@ def test_scan_skips_unknown_projects(fake_project_tree, db, capsys):
     stats = scanner.scan(db_path=db_path, commit=True)
     assert stats["projects_missing_in_db"] == 1
 
-    rows = db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    db.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
     # Only 260101's files indexed; 260202's are not
     file_paths = [
         r["file_path"] for r in db.execute("SELECT file_path FROM documents").fetchall()

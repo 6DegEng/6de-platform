@@ -14,6 +14,16 @@ from modules.status_colors import (
     status_pill_html,
 )
 
+# Public re-export surface (kept explicit so the unused-import linter treats
+# these backward-compat aliases as intentional API, not dead imports).
+__all__ = [
+    "PROJECT_STATUS_COLORS",
+    "PROJECT_STATUS_LABELS",
+    "PROJECT_STATUSES",
+    "render_status_pill",
+    "status_pill_html",
+]
+
 PROJECT_STATUSES: tuple[str, ...] = (
     "prospect",
     "active",

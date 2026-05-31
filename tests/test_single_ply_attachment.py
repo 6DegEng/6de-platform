@@ -10,9 +10,7 @@ import math
 import pytest
 
 from modules.calculator.single_ply_attachment import (
-    BuildingInfo,
     CalcInputs,
-    ProductApproval,
     WindInputs,
     ZoneSpacing,
     calculate,

@@ -27,7 +27,6 @@ from config import (
     DB_BACKEND,
     DB_PATH,
     LEGACY_DB_PATH,
-    PLATFORM_DATABASE_URL,
     SCHEMA_PATH,
 )
 from modules.accounting.categorization import seed_rules_from_vba

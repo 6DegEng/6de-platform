@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from datetime import date
+from typing import Any
 from pathlib import Path
 
 import streamlit as st
@@ -30,8 +31,6 @@ from modules.crm.crud import (  # noqa: E402
     convert_to_project,
     create_client,
     create_opportunity,
-    get_client,
-    get_opportunity,
     get_pipeline_summary,
     get_win_loss_stats,
     list_clients,
@@ -44,7 +43,6 @@ from streamlit_app.components.formatters import (  # noqa: E402
     format_currency,
     format_date,
     format_percentage,
-    status_badge,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
 

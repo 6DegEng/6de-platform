@@ -145,7 +145,6 @@ def update_project(
     and emit a dedicated ``status_changed`` activity row.
     """
     from modules.projects.workflow import (
-        InvalidStatusTransition,
         clamp_percent_complete,
         validate_priority,
         validate_status_transition,

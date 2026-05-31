@@ -34,7 +34,6 @@ from modules.financials.queries import (  # noqa: E402
 from modules.invoicing.crud import get_ar_aging_report, get_ar_aging_summary  # noqa: E402
 from streamlit_app.components.formatters import (  # noqa: E402
     format_currency,
-    format_percentage,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
 

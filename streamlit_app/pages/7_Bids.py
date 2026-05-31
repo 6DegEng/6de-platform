@@ -25,7 +25,6 @@ if str(_PLATFORM_ROOT) not in sys.path:
 from db import ensure_db  # noqa: E402
 from modules.bids.crud import (  # noqa: E402
     create_bid,
-    get_bid,
     get_bid_stats,
     get_upcoming_deadlines,
     list_bids,
@@ -36,16 +35,12 @@ from modules.bids.crud import (  # noqa: E402
 from modules.subconsultants.crud import (  # noqa: E402
     create_purchase_order,
     create_subconsultant,
-    get_subconsultant,
     list_purchase_orders,
     list_subconsultants,
-    update_purchase_order,
     update_subconsultant,
 )
 from streamlit_app.components.formatters import (  # noqa: E402
     days_until,
-    format_currency,
-    format_date,
     status_badge,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
@@ -637,7 +632,7 @@ with tab_deadlines:
                 else:
                     days_text = f"**{d} days**"
 
-                badge_html = _bid_status_badge(item["status"])
+                _bid_status_badge(item["status"])
                 line = (
                     f"**{item['type']}** -- {item['title']}  \n"
                     f"Agency: {item['agency']}  |  "

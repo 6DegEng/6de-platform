@@ -36,8 +36,6 @@ from streamlit_app.components.formatters import (
     format_currency,
     format_currency_compact,
     format_date,
-    status_badge,
-    urgency_color,
 )
 
 # ---------------------------------------------------------------------------

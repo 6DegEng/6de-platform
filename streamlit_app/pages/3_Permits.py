@@ -29,7 +29,6 @@ from modules.permits.crud import (
     get_cca_deadlines,
     get_expiring_permits,
     get_overdue_inspections,
-    get_permit,
     get_permit_stats,
     list_contacts,
     list_permits,

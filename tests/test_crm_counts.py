@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
 
-from modules.crm import crud
 from modules.crm.crud import (
     ACTIVE_STAGES,
     CLOSED_STAGES,

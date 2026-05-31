@@ -56,7 +56,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
 
 from config import SIXDE_PROJECTS_ROOT  # noqa: E402
 from db import ensure_db, get_connection  # noqa: E402
-from modules.documents.sharepoint import classify_category, content_sha256  # noqa: E402
+from modules.documents.sharepoint import classify_category  # noqa: E402
 
 
 _PROJECT_FOLDER_RE = re.compile(r"^(?P<num>\d{6})\s*-\s*(?P<name>.+)$")

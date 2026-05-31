@@ -11,11 +11,8 @@ plus direct calls to the underlying CRUD layer.
 """
 from __future__ import annotations
 
-import os
-import sqlite3
 import sys
 from pathlib import Path
-from unittest import mock
 
 import pytest
 

@@ -72,7 +72,7 @@ def main() -> int:
     print(f"      {len(children)} item(s) in /Test/: {names[:5]}{'...' if len(names) > 5 else ''}")
     assert any(c.get("id") == item_id for c in children), "uploaded item not in /Test/ listing"
 
-    print(f"[5/5] delete(item_id) ...")
+    print("[5/5] delete(item_id) ...")
     client.delete(item_id)
     print("      deleted.")
 

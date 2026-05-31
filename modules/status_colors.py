@@ -185,7 +185,7 @@ def _validate_contrast() -> None:
 
     if failures:
         raise ValueError(
-            f"WCAG AA contrast violations:\n" + "\n".join(failures)
+            "WCAG AA contrast violations:\n" + "\n".join(failures)
         )
 
 

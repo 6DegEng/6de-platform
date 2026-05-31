@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from streamlit_app.components.status_pills import PROJECT_STATUSES
 
 
 from modules.status_colors import (

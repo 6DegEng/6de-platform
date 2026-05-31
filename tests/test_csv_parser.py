@@ -6,7 +6,6 @@ header detection, BofA-specific quirks, and row-hash dedup.
 from __future__ import annotations
 
 import io
-import pytest
 import sys
 from pathlib import Path
 
