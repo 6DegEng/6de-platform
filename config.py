@@ -152,11 +152,25 @@ CALC_EXE_PATH = Path(os.environ.get(
 
 # ---------------------------------------------------------------------------
 # Auth config — gitignored YAML; env-var-overridable for production secrets
+# (legacy streamlit-authenticator credentials; retained for reference only now
+# that identity comes from Azure App Service Easy Auth — see modules/auth.py)
 # ---------------------------------------------------------------------------
 AUTH_CONFIG_PATH = Path(os.environ.get(
     "AUTH_CONFIG_PATH",
     str(_PLATFORM_ROOT / "auth_config.yaml"),
 ))
+
+# ---------------------------------------------------------------------------
+# Staff SSO (Azure App Service "Easy Auth" + Entra ID, single-tenant)
+# ---------------------------------------------------------------------------
+# In production the platform runs behind Easy Auth, which injects the signed-in
+# user as request headers (read in modules/auth.get_current_user). Easy Auth
+# does not exist on localhost, so `streamlit run` falls back to this DEV user
+# (set PLATFORM_FORCE_DEV_AUTH=1 to force the fallback even on a host that looks
+# like Azure). These are NOT secrets — just a local identity for development.
+DEV_AUTH_USER_EMAIL = os.environ.get("DEV_AUTH_USER_EMAIL", "dev@6de.xyz")
+DEV_AUTH_USER_NAME = os.environ.get("DEV_AUTH_USER_NAME", "Local Developer")
+FORCE_DEV_AUTH = _flag("PLATFORM_FORCE_DEV_AUTH", False)
 
 # ---------------------------------------------------------------------------
 # Microsoft Graph / SharePoint (Phase 2)
