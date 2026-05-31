@@ -94,7 +94,7 @@ def _check_backend() -> None:
         return
     if DB_BACKEND == "postgres":
         raise NotImplementedError(
-            "DB_BACKEND=postgres is reserved for Phase 8 (Postgres + Render Deploy). "
+            "DB_BACKEND=postgres is reserved for Phase 8 (Azure Database for PostgreSQL). "
             "See PLATFORM_GOAL_v1.md Phase 8 for the migration plan. "
             "For now, leave DB_BACKEND unset or set to 'sqlite'."
         )

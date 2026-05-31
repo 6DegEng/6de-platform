@@ -9,14 +9,16 @@
 #           -v $PWD/auth_config.yaml:/secrets/auth_config.yaml:ro \
 #           6de-platform
 #
-# On Render (Phase 8): the volume becomes a Render Persistent Disk; auth is
-# mounted from Render's secrets; DB_BACKEND will flip to "postgres" with
-# PLATFORM_DATABASE_URL pointing at Neon.
+# On Azure App Service (Phase 8): persistent data moves to Azure Database for
+# PostgreSQL flexible server + Azure Blob Storage; auth and connection secrets
+# are mounted from Azure Key Vault via the App Service managed identity;
+# DB_BACKEND will flip to "postgres" with PLATFORM_DATABASE_URL pointing at the
+# Azure Postgres server.
 
 FROM python:3.12-slim
 
 # System deps: build-essential for wheels that need compilation;
-# ca-certificates for HTTPS to Stripe / Graph / Neon.
+# ca-certificates for HTTPS to Stripe / Graph / Azure.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \

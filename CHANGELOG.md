@@ -1,5 +1,20 @@
 # Changelog
 
+## Hosting docs reconciled to Azure -- 2026-05-29
+
+Documentation-only pass. Reconciled stale Phase 8 hosting references from the
+original "Render + Neon" plan to the canonical target: **Azure App Service for
+Linux + Azure Database for PostgreSQL flexible server** (`sixde-platform-db-jc`),
+with Azure Blob Storage, Azure Key Vault, and Azure Container Registry
+(`sixdeacrjc.azurecr.io`). No code logic changed.
+
+- `README.md`: Database/Docker sections + intro now reference Azure resources.
+- `Dockerfile`: Phase 8 header comment + ca-certificates comment now name Azure.
+- `db/__init__.py`, `config.py`: `DB_BACKEND=postgres` seam comments name Azure.
+- `docs/audit/appendix_b_platform_cartography.md`: Phase 8 line now Azure.
+- `archive/session_notes/PLATFORM_GOAL_v1.md`: Phase 8 section flagged SUPERSEDED
+  (history preserved; points to `Feature_Research/Hosting_and_Integration_Roadmap.md`
+  as the canonical Azure plan).
 ## Slack project-update notification (Phase 0 — composition) -- 2026-05-31
 
 Third integrations slice (docs/roadmap/integrations.md #3), stacked on the

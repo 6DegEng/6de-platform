@@ -47,7 +47,7 @@ except ImportError:
     pass
 
 # ---------------------------------------------------------------------------
-# Database backend selection (Phase 1 seam — Phase 8 will implement postgres)
+# Database backend selection (Phase 1 seam — Phase 8 implements postgres on Azure)
 # ---------------------------------------------------------------------------
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite").lower()
 PLATFORM_DATABASE_URL = os.environ.get("PLATFORM_DATABASE_URL")

@@ -184,7 +184,7 @@ Centralizes all external path resolution via environment variables with sensible
 **Phase 3:** Mobile PWA + email-first workflow.
 **Phase 4–6:** AI knowledge assistant, Stripe payments, Telegram alerts, nightly calc snapshot sync.
 **Phase 7:** Chrome-connector smoke-test debug pass + staging cutover prep.
-**Phase 8:** Production flip to Render + Neon Postgres.
+**Phase 8:** Production flip to Azure App Service for Linux + Azure Database for PostgreSQL flexible server.
 
 **Timeline anchor:** May–Oct 2026 = Phases 0–6/7; Oct–Nov 2026 = Phase 7 staging; Nov 2026 = Phase 8 flip.
 
@@ -366,4 +366,4 @@ The **6DE Company Platform v3.2** is a **local Streamlit ERP** backed by SQLite,
 
 **Ready to extend:** new modules drop into `modules/{name}/` with bare CRUD + a Streamlit page, reusing the session-cached DB connection, auth gate, and formatter utilities. No framework bloat; conventions are lightweight.
 
-**Cloud flip (Phase 8) is 6+ months out** per PLATFORM_GOAL_v1.md. Current local-first build-and-debug strategy de-risks the Postgres + Render migration by ensuring all features ship working against SQLite first.
+**Cloud flip (Phase 8) is 6+ months out** per PLATFORM_GOAL_v1.md. Current local-first build-and-debug strategy de-risks the Postgres + Azure migration by ensuring all features ship working against SQLite first.
