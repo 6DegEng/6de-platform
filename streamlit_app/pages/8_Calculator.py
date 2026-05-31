@@ -9,6 +9,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
 import streamlit as st
+from streamlit_app.components.branding import page_header
 from db import ensure_db, get_calc_connection
 from modules.calculator.auditor import audit_calc_project, render_audit_markdown
 from modules.calculator.bridge import (
@@ -33,7 +34,7 @@ from streamlit_app.auth import require_auth
 
 st.set_page_config(page_title="Engineering | 6DE", page_icon="🔧", layout="wide")
 require_auth()
-st.title("Engineering")
+page_header("Engineering", "Calc engine & code references", "🔧")
 
 conn = ensure_db()
 calc_conn = get_calc_connection()

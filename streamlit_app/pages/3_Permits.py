@@ -12,6 +12,8 @@ from datetime import date
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import empty_state
+from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
 # Path setup — ensure the platform root is importable
@@ -216,7 +218,7 @@ def _get_projects():
 # Page header
 # ---------------------------------------------------------------------------
 
-st.title("Permit Tracker")
+page_header("Permit Tracker", "Permits, inspections & deadlines", "📋")
 st.caption("Miami-Dade County RER -- Building Permits, Recertifications, and CCAs")
 
 # ---------------------------------------------------------------------------
@@ -386,7 +388,7 @@ with tab_permits:
 
     # --- Permit list ---
     if not permits:
-        st.info("No permits found matching your filters.")
+        empty_state("No permits found matching your filters.")
     else:
         st.markdown(f"**{len(permits)} permit{'s' if len(permits) != 1 else ''}**")
 
