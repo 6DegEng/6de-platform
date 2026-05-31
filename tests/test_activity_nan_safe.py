@@ -250,3 +250,67 @@ def test_project_crud_nan_safe(db):
     assert parsed.get("contract_value") is None, (
         f"Expected null for NaN, got {parsed.get('contract_value')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Contract-value NaN: write boundary stores NULL, display never shows "$nan"
+# ---------------------------------------------------------------------------
+class TestContractValueNaN:
+    def test_nan_to_none_helper(self):
+        from modules.activity_utils import nan_to_none
+        assert nan_to_none(float("nan")) is None
+        assert nan_to_none(float("inf")) is None
+        assert nan_to_none(5.0) == 5.0
+        assert nan_to_none(0) == 0
+        assert nan_to_none(None) is None
+        assert nan_to_none("x") == "x"
+
+    def test_crud_stores_null_not_nan_in_column(self, db):
+        """The projects.contract_value COLUMN must be NULL, not NaN, after a NaN write."""
+        from modules.projects.crud import create_project, update_project
+        pid = create_project(db, name="NaN Col", status="active", state="FL")
+        update_project(db, pid, contract_value=float("nan"))
+        col = db.execute(
+            "SELECT contract_value FROM projects WHERE id=?", (pid,)
+        ).fetchone()["contract_value"]
+        assert col is None  # SQLite stored NULL, not a poisoning NaN
+
+    def test_create_with_nan_contract_value_stores_null(self, db):
+        from modules.projects.crud import create_project
+        pid = create_project(db, name="NaN New", status="active", state="FL",
+                             contract_value=float("nan"))
+        col = db.execute(
+            "SELECT contract_value FROM projects WHERE id=?", (pid,)
+        ).fetchone()["contract_value"]
+        assert col is None
+
+    def test_backlog_sum_unpoisoned(self, db):
+        """A NaN row must not poison SUM(contract_value)."""
+        from modules.projects.crud import create_project
+        create_project(db, name="Has Value", status="active", state="FL",
+                       contract_value=1000.0)
+        create_project(db, name="Blank", status="active", state="FL",
+                       contract_value=float("nan"))
+        total = db.execute(
+            "SELECT COALESCE(SUM(contract_value), 0) AS t FROM projects"
+        ).fetchone()["t"]
+        assert total == 1000.0
+
+    def test_format_currency_nan_not_dollar_nan(self):
+        from streamlit_app.components.formatters import (
+            format_currency, format_currency_compact,
+        )
+        assert format_currency(float("nan")) == "$0.00"
+        assert "nan" not in format_currency(float("nan")).lower()
+        assert format_currency_compact(float("nan")) == "$0"
+        assert "nan" not in format_currency_compact(float("nan")).lower()
+        # real values still format
+        assert format_currency(1234.5) == "$1,234.50"
+
+    def test_importers_coerce_nan_to_none(self):
+        from scripts.importers.import_project_tracker import _float
+        from scripts.import_legacy_xlsx import _float_val
+        assert _float(float("nan")) is None
+        assert _float_val(float("nan")) is None
+        assert _float(2500.0) == 2500.0
+        assert _float_val("3000") == 3000.0
