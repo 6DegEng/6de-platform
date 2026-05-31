@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import streamlit as st
+from streamlit_app.components.sidebar import render_sidebar
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -99,6 +100,7 @@ from streamlit_app.components.status_pills import (  # noqa: E402
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Projects | 6DE", page_icon="🏗️", layout="wide")
 require_auth()
+render_sidebar()
 page_header("Projects", "Active engagements, milestones & status", "🏗️")
 
 conn = ensure_db()

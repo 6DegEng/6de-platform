@@ -10,6 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.sidebar import render_sidebar
 from streamlit_app.components.branding import empty_state
 from streamlit_app.components.branding import page_header
 
@@ -42,6 +43,7 @@ from streamlit_app.auth import require_auth  # noqa: E402
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Billing | 6DE Platform", page_icon="$", layout="wide")
 require_auth()
+render_sidebar()
 
 
 # ---------------------------------------------------------------------------

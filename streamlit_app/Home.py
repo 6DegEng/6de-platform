@@ -24,6 +24,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
 import pandas as pd
 import streamlit as st
 from streamlit_app.components.branding import page_header
+from streamlit_app.components.sidebar import render_sidebar
 
 from db import ensure_db
 from modules.dashboard.queries import get_dashboard_data
@@ -118,93 +119,7 @@ require_auth()
 # ---------------------------------------------------------------------------
 # Sidebar — grouped information architecture (4 sections)
 # ---------------------------------------------------------------------------
-# Hide the default auto-generated sidebar nav so our grouped nav is the
-# only navigation the user sees.
-st.markdown(
-    """
-    <style>
-    /* Hide default Streamlit multi-page sidebar nav */
-    [data-testid="stSidebarNav"] { display: none; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-with st.sidebar:
-    show_logout_button()
-    page_header("6th Degree Engineering", "Company operations dashboard", "🏛️")
-    st.caption("ERP Platform v3.5")
-    st.divider()
-
-    # -- Overview --
-    st.markdown(
-        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
-        "text-transform:uppercase;letter-spacing:0.05em;'>Overview</span>",
-        unsafe_allow_html=True,
-    )
-    st.page_link("Home.py", label="Home", icon=":material/home:")
-
-    st.markdown("")  # spacer
-
-    # -- Sales Pipeline --
-    st.markdown(
-        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
-        "text-transform:uppercase;letter-spacing:0.05em;'>Sales Pipeline</span>",
-        unsafe_allow_html=True,
-    )
-    st.page_link("pages/4_CRM.py", label="CRM", icon=":material/handshake:")
-    st.page_link("pages/7_Bids.py", label="Gov Solicitations", icon=":material/gavel:")
-    st.page_link("pages/1_Projects.py", label="Projects", icon=":material/folder:")
-    st.page_link("pages/3_Permits.py", label="Permits", icon=":material/description:")
-
-    st.markdown("")  # spacer
-
-    # -- Tools --
-    st.markdown(
-        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
-        "text-transform:uppercase;letter-spacing:0.05em;'>Tools</span>",
-        unsafe_allow_html=True,
-    )
-    st.page_link("pages/8_Calculator.py", label="Engineering", icon=":material/calculate:")
-
-    st.markdown("")  # spacer
-
-    # -- Finance --
-    st.markdown(
-        "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
-        "text-transform:uppercase;letter-spacing:0.05em;'>Finance</span>",
-        unsafe_allow_html=True,
-    )
-    st.page_link("pages/2_Billing.py", label="Billing", icon=":material/receipt_long:")
-    st.page_link("pages/5_Timekeeping.py", label="Timekeeping", icon=":material/schedule:")
-    st.page_link("pages/6_Financials.py", label="Financials", icon=":material/monitoring:")
-    st.page_link("pages/9_Accounting.py", label="Accounting", icon=":material/account_balance:")
-
-    st.divider()
-    st.markdown("**SharePoint mirror**")
-    if st.button("Regenerate snapshots", key="ui:home:regen_mirrors",
-                 use_container_width=True,
-                 help="Render all _AUTO_*.md and _AUTO_portfolio_overview.xlsx, "
-                      "uploading only files that changed."):
-        from modules.mirror.sync import sync_all
-        with st.spinner("Syncing snapshots…"):
-            _result = sync_all(ensure_db())
-        _counts = _result["project_counts"]
-        st.success(
-            f"Synced {_result['total_projects']} projects + 1 portfolio.  "
-            f"Uploaded: {_counts.get('uploaded', 0) + _counts.get('local', 0)} · "
-            f"Unchanged: {_counts.get('unchanged', 0)} · "
-            f"Errors: {len(_result['errors'])}"
-        )
-        if _result["errors"]:
-            with st.expander("Error details"):
-                st.json(_result["errors"])
-    st.divider()
-    st.markdown(
-        "<small style='color:#6c757d;'>Juan C. Castillo, P.E.&ensp;|&ensp;"
-        "FL PE #98059</small>",
-        unsafe_allow_html=True,
-    )
+render_sidebar()
 
 # ---------------------------------------------------------------------------
 # Load data

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_app.components.sidebar import render_sidebar
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ st.set_page_config(
     layout="wide",
 )
 require_auth()
+render_sidebar()
 
 # ---------------------------------------------------------------------------
 # DB connection
