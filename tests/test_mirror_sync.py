@@ -26,6 +26,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
 from modules.documents.sharepoint import StubGraphClient  # noqa: E402
 from modules.mirror import sync as sync_mod  # noqa: E402
 from modules.mirror.sync import (  # noqa: E402
+    _portfolio_digest,
     sync_all,
     sync_portfolio_xlsx,
     sync_project_markdown,
@@ -174,6 +175,47 @@ class TestSyncAll:
         result = sync_all(db, client=client, today=FIXED_DATE)
         assert result["project_counts"]["unchanged"] >= 1
         assert result["portfolio"]["status"] == "unchanged"
+
+
+# ---------------------------------------------------------------------------
+# Deterministic change-detection (regression: openpyxl xlsx-byte volatility)
+# ---------------------------------------------------------------------------
+class TestPortfolioDigest:
+    def test_digest_is_deterministic(self):
+        projects = [{"job_number": "260501", "name": "A", "status": "active"}]
+        d1 = _portfolio_digest(projects, base_url="u", platform_version="v3.5", today=FIXED_DATE)
+        d2 = _portfolio_digest(projects, base_url="u", platform_version="v3.5", today=FIXED_DATE)
+        assert d1 == d2
+
+    def test_digest_changes_on_content_change(self):
+        base = [{"job_number": "260501", "name": "A", "status": "active"}]
+        changed = [{"job_number": "260501", "name": "A", "status": "completed"}]
+        d_base = _portfolio_digest(base, base_url="u", platform_version="v3.5", today=FIXED_DATE)
+        assert _portfolio_digest(changed, base_url="u", platform_version="v3.5", today=FIXED_DATE) != d_base
+        assert _portfolio_digest(base, base_url="u", platform_version="v3.6", today=FIXED_DATE) != d_base
+        assert _portfolio_digest(base, base_url="u", platform_version="v3.5", today=date(2026, 1, 1)) != d_base
+
+    def test_portfolio_unchanged_despite_volatile_xlsx_bytes(self, db, seeded_project, isolated_state, monkeypatch):
+        """The crux: openpyxl bakes wall-clock ZIP timestamps into the .xlsx, so
+        two renders of identical data are not byte-identical. Change detection
+        must hash the inputs, not the bytes — simulate drift and assert the
+        second sync is still 'unchanged'."""
+        counter = {"n": 0}
+        real = sync_mod.render_portfolio_overview
+
+        def drifting(*args, **kwargs):
+            counter["n"] += 1
+            # Same logical content, but different trailing bytes each call —
+            # exactly what openpyxl's timestamped ZIP does across a second.
+            return real(*args, **kwargs) + f"\x00drift{counter['n']}".encode()
+
+        monkeypatch.setattr(sync_mod, "render_portfolio_overview", drifting)
+        client = StubGraphClient()
+        first = sync_portfolio_xlsx(db, client=client, today=FIXED_DATE)
+        second = sync_portfolio_xlsx(db, client=client, today=FIXED_DATE)
+        assert first["status"] in ("local", "uploaded")
+        assert second["status"] == "unchanged"
+        assert counter["n"] == 2  # both calls really rendered (distinct bytes)
 
 
 # ---------------------------------------------------------------------------
