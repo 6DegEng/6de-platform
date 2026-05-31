@@ -15,6 +15,80 @@ with Azure Blob Storage, Azure Key Vault, and Azure Container Registry
 - `archive/session_notes/PLATFORM_GOAL_v1.md`: Phase 8 section flagged SUPERSEDED
   (history preserved; points to `Feature_Research/Hosting_and_Integration_Roadmap.md`
   as the canonical Azure plan).
+## Slack project-update notification (Phase 0 — composition) -- 2026-05-31
+
+Third integrations slice (docs/roadmap/integrations.md #3), stacked on the
+delivery-email branch. Credential-free, composition-only — no webhook POST.
+
+### Module (modules/integrations/slack.py)
+- should_notify(category): only client_communication / internal_note notify.
+- compose_slack_message(conn, update_id): Block Kit payload (header+section+context)
+  + text fallback for a notifiable update; None otherwise.
+- find_notifiable_updates(conn, project_id=None): future-sweep helper.
+
+### Config
+- New ENABLE_SLACK_NOTIFY feature flag (default off).
+
+### Tests
+- tests/test_slack_notify.py (11 tests): category filter, payload shape/content,
+  not-notifiable + missing guards, sweep filter/scoping.
+
+
+## Delivery-milestone email (Phase 0 — composition) -- 2026-05-30
+
+Second integrations slice (`docs/roadmap/integrations.md` #2). Credential-free,
+composition-only — no SMTP/Graph send.
+
+### Module (`modules/integrations/delivery_email.py`)
+- `is_delivery_milestone(name)`: case-insensitive match against a curated
+  `DELIVERY_PATTERNS` list (conservative — internal milestones don't trigger).
+- `compose_delivery_email(conn, milestone_id)`: builds recipient/subject/body
+  for a *completed* delivery milestone (else returns `None`); resolves client
+  email with a graceful fallback; brand-correct sign-off (PE #98059, info@6de.xyz).
+- `find_completed_delivery_milestones(conn, project_id=None)`: future-sweep helper.
+
+### Config
+- New `ENABLE_DELIVERY_EMAIL` feature flag (default off).
+
+### Tests
+- `tests/test_delivery_email.py` (17 tests): pattern matcher (pos/neg), completed-
+  only + delivery-only guards, missing milestone, recipient resolution + fallback,
+  generic greeting, message content, and the sweep filter.
+
+## QuickBooks Invoice Export (Phase 0 — CSV) -- 2026-05-29
+
+First slice of the QuickBooks integration (`docs/roadmap/integrations.md` #1).
+Credential-free, pure data transform — no QBO API yet.
+
+### Module (`modules/integrations/`)
+- `quickbooks.py`: `export_invoices_to_qbo_csv(conn, statuses=, invoice_ids=)`
+  serializes finalized invoices (`sent`/`paid`/`overdue` by default) into the
+  QuickBooks Online invoice-import CSV layout (one row per line item; invoices
+  with no line items emit a single summary row at the invoice total). Customer
+  resolved from client company → client name → `job# - project` fallback.
+  `line_type` mapped to QBO product/service items. Read-only.
+- `__init__.py`: integrations package docstring.
+
+### Config
+- New `ENABLE_QBO_EXPORT` feature flag (default off) + `_flag()` env-var
+  boolean helper in `config.py`.
+
+### Tests
+- `tests/test_qbo_export.py` (9 tests): empty→header-only, one-row-per-line-item
+  mapping, summary row, status filter, id filter, customer fallback chain,
+  fractional-quantity formatting, no-mutation guard, stable ordering.
+## Fix: deterministic portfolio mirror change-detection -- 2026-05-30
+
+`modules/mirror/sync.py` hashed the rendered **.xlsx bytes** for portfolio
+change detection. openpyxl bakes wall-clock ZIP member timestamps into the
+saved file, so two renders of identical data are not byte-identical once a
+one-second boundary is crossed — causing the portfolio to be re-uploaded on
+most syncs and intermittently failing `test_sync_all_unchanged_on_second_run`
+in full-suite runs (it passed in isolation when both renders landed in the same
+second). Change detection now hashes a **canonical serialization of the inputs**
+(`_portfolio_digest`: projects + base_url + platform_version + today) instead of
+the volatile binary. Added 3 regression tests, incl. one that monkeypatches the
+renderer to drift its bytes and asserts the second sync is still `unchanged`.
 
 ## Bank CSV Import (Phase 0) -- 2026-05-24
 
