@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import streamlit as st
+from streamlit_app.components.branding import empty_state
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -285,7 +286,7 @@ with tab_pipeline:
                         bids.extend(list_bids(conn, status=s))
 
             if not bids:
-                st.info("No bids found." if search_query else "No bids in this category.")
+                empty_state("No bids found." if search_query else "No bids in this category.")
                 continue
 
             st.markdown(f"**{len(bids)} bid{'s' if len(bids) != 1 else ''}**")
@@ -610,7 +611,7 @@ with tab_deadlines:
     deadline_items.sort(key=lambda x: (x["date"] is None, x["date"] or "9999-12-31"))
 
     if not deadline_items:
-        st.info("No upcoming bid deadlines. All clear.")
+        empty_state("No upcoming bid deadlines. All clear.")
     else:
         st.markdown(f"**{len(deadline_items)} deadline item{'s' if len(deadline_items) != 1 else ''}**")
 
@@ -667,7 +668,7 @@ with tab_subs:
     subconsultants = list_subconsultants(conn)
 
     if not subconsultants:
-        st.info("No subconsultants registered yet.")
+        empty_state("No subconsultants registered yet.")
     else:
         for sub in subconsultants:
             sid = sub["id"]
