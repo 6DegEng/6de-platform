@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from modules.activity_utils import sanitize_details

@@ -40,8 +40,6 @@ from modules.timekeeping.crud import (  # noqa: E402
     list_fee_schedule,
     list_time_entries,
     update_employee,
-    update_expense,
-    update_time_entry,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
 

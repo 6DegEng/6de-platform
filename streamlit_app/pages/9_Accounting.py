@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd

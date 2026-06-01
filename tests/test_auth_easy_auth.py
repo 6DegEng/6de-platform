@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import json
 
-import pytest
 
 from modules import auth as easy_auth
 

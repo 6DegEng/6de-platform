@@ -18,17 +18,7 @@ from modules.calculator.bridge import (
     link_calc_to_erp,
     read_calc_projects,
 )
-from modules.calculator.required_checks import REQUIRED_CHECKS, seed_required_checks
-from modules.calculator.single_ply_attachment import (
-    BuildingInfo,
-    CalcInputs,
-    ProductApproval,
-    ProjectInfo,
-    WindInputs,
-    ZoneSpacing,
-    calculate as run_single_ply_calc,
-    render_text_memo as render_single_ply_memo,
-)
+from modules.calculator.required_checks import seed_required_checks
 from modules.projects.crud import list_projects
 from streamlit_app.auth import require_auth
 

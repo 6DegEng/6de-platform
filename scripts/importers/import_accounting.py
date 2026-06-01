@@ -449,8 +449,6 @@ def main():
     wb = openpyxl.load_workbook(SOURCE, data_only=True, read_only=True)
     conn = ensure_db()
 
-    # Track total_changes for INSERT OR IGNORE counting
-    initial_changes = 0
 
     try:
         # --- Transactions ---

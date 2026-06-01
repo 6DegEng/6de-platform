@@ -11,12 +11,9 @@ Tests cover:
 from __future__ import annotations
 
 import json
-import math
-import sqlite3
 import sys
 from pathlib import Path
 
-import pytest
 
 _PLATFORM_ROOT = Path(__file__).resolve().parents[1]
 if str(_PLATFORM_ROOT) not in sys.path:

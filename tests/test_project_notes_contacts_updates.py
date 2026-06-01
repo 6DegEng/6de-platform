@@ -106,8 +106,8 @@ class TestProjectNotes:
 # -----------------------------------------------------------------------
 class TestProjectContacts:
     def test_create_and_list(self, db, project_id):
-        c1 = create_project_contact(db, project_id, "Alice", role="client")
-        c2 = create_project_contact(db, project_id, "Bob", role="architect")
+        create_project_contact(db, project_id, "Alice", role="client")
+        create_project_contact(db, project_id, "Bob", role="architect")
         contacts = list_project_contacts(db, project_id)
         assert len(contacts) == 2
 
@@ -184,7 +184,7 @@ class TestProjectContacts:
 # -----------------------------------------------------------------------
 class TestProjectUpdates:
     def test_create_and_list(self, db, project_id):
-        u1 = create_project_update(db, project_id, "Update 1")
+        create_project_update(db, project_id, "Update 1")
         u2 = create_project_update(db, project_id, "Update 2")
         updates = list_project_updates(db, project_id)
         assert len(updates) == 2

@@ -156,7 +156,7 @@ class TestPortfolioXlsx:
 class TestSyncAll:
     def test_sync_all_counts_correctly(self, db, isolated_state):
         # Seed 3 projects.
-        pids = [
+        [
             create_project(db, name=f"P{i}", status="active", state="FL",
                            start_date="2026-01-01")
             for i in range(3)

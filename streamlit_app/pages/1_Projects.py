@@ -50,7 +50,6 @@ from modules.projects.crud import (  # noqa: E402
     create_milestone,
     create_project,
     delete_project,
-    get_project,
     get_project_stats,
     list_milestones,
     list_projects,
@@ -72,7 +71,6 @@ from modules.projects.updates import (  # noqa: E402
     list_project_updates,
 )
 from modules.projects.workflow import (  # noqa: E402
-    PRIORITY_COLORS,
     PRIORITY_LABELS,
     PRIORITY_VALUES,
 )
@@ -756,7 +754,7 @@ def _render_project_detail_tabs(proj, tab_idx: int = 0) -> None:
                         ms_name.strip(),
                         due_date=ms_due.isoformat() if ms_due else None,
                     )
-                    st.success(f"Milestone added.")
+                    st.success("Milestone added.")
                     st.rerun()
 
     # --- Calculations ---

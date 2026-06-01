@@ -394,7 +394,7 @@ def commit_rows(
                 (data["job_number"],),
             ).fetchone()
             if proj:
-                jn = data.pop("job_number", None)
+                data.pop("job_number", None)
                 data.pop("name", None)  # don't overwrite name on update
                 if data:
                     update_project(conn, proj["id"], **data)
