@@ -88,6 +88,11 @@ desktop.ini
 
 # ---------- Runtime-generated ----------
 db/.sync_state.json
+# SharePoint-mirror "Regenerate snapshots" output + state (modules/mirror/sync.py):
+# offline/stub fallback snapshots and the change-tracking state file. Generated
+# at runtime — must never be committed.
+db/.mirror_state.json
+db/.snapshots/
 scripts/sync_accounting.log
 
 # ---------- Docker build artifacts ----------
