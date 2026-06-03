@@ -151,14 +151,23 @@ CALC_EXE_PATH = Path(os.environ.get(
 ))
 
 # ---------------------------------------------------------------------------
-# Auth config — gitignored YAML; env-var-overridable for production secrets
-# (legacy streamlit-authenticator credentials; retained for reference only now
-# that identity comes from Azure App Service Easy Auth — see modules/auth.py)
+# Auth config (OPTIONAL) — NOT required to sign in.
 # ---------------------------------------------------------------------------
-AUTH_CONFIG_PATH = Path(os.environ.get(
-    "AUTH_CONFIG_PATH",
-    str(_PLATFORM_ROOT / "auth_config.yaml"),
-))
+# Login is handled by Azure App Service Easy Auth (Entra ID) in production and
+# by a DEV identity locally — see modules/auth.py. This YAML is no longer a
+# login gate; it is only read, when present, for the engineer profile on calc
+# cover sheets (modules/calculator/cover_sheet.py), which falls back to sane
+# defaults if the file is absent. The default is a repo-relative path resolved
+# with pathlib — never an absolute Windows / Git-Bash path. A *relative*
+# AUTH_CONFIG_PATH override is resolved against the project root so it can't
+# leak a host-specific absolute path (the old /home/secrets and
+# C:/Program Files/Git/home/secrets defaults are gone).
+_auth_config_override = os.environ.get("AUTH_CONFIG_PATH")
+if _auth_config_override:
+    _acp = Path(_auth_config_override)
+    AUTH_CONFIG_PATH = _acp if _acp.is_absolute() else (_PLATFORM_ROOT / _acp)
+else:
+    AUTH_CONFIG_PATH = _PLATFORM_ROOT / "auth_config.yaml"
 
 # ---------------------------------------------------------------------------
 # Staff SSO (Azure App Service "Easy Auth" + Entra ID, single-tenant)

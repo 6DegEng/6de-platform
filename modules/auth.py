@@ -117,21 +117,43 @@ def _decode_display_name(principal_b64: str, fallback: str) -> str:
     return fallback
 
 
-def _is_local_dev(headers: dict) -> bool:
-    """True when we should hand back the DEV user instead of requiring Easy Auth.
+def is_behind_easy_auth(headers: Optional[dict] = None) -> bool:
+    """True when the app is running behind Azure App Service Easy Auth.
 
-    Behind Easy Auth (302-redirect mode) an unauthenticated request never
-    reaches this code, so a request that *does* reach us without the principal
-    header is either (a) local dev, or (b) an explicit override. On Azure App
-    Service, WEBSITE_HOSTNAME is always set; locally it is not.
+    Either signal is sufficient:
+      - an Easy Auth principal header is present on the request
+        (``X-MS-CLIENT-PRINCIPAL-NAME``), or
+      - ``WEBSITE_HOSTNAME`` is set (always true on App Service).
+
+    When this is True we trust the Azure-injected identity and must NEVER fall
+    back to a credential file / YAML login. ``PLATFORM_FORCE_DEV_AUTH=1`` forces
+    local-dev mode even on a host that looks like Azure (escape hatch).
+
+    Centralised here so the page gate (``streamlit_app/auth.require_auth``) and
+    any future caller share one definition of "are we behind Easy Auth?".
     """
     try:
         from config import FORCE_DEV_AUTH
         if FORCE_DEV_AUTH:
-            return True
+            return False
     except Exception:
         pass
-    return not os.environ.get("WEBSITE_HOSTNAME")
+    if headers is None:
+        headers = _headers()
+    if _lookup(headers, _HEADER_NAME):
+        return True
+    return bool(os.environ.get("WEBSITE_HOSTNAME"))
+
+
+def _is_local_dev(headers: dict) -> bool:
+    """True when we should hand back the DEV user instead of requiring Easy Auth.
+
+    The logical complement of :func:`is_behind_easy_auth`. Behind Easy Auth
+    (302-redirect mode) an unauthenticated request never reaches this code, so a
+    request that *does* reach us without the principal header is either local
+    dev or an explicit override.
+    """
+    return not is_behind_easy_auth(headers)
 
 
 def _dev_user() -> CurrentUser:
