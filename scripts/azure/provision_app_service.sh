@@ -119,9 +119,13 @@ az webapp config appsettings set -g "$RG" -n "$APP_NAME" --settings \
   STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
   DB_BACKEND=sqlite \
   PLATFORM_DB_PATH=/home/data/platform.db \
-  AUTH_CONFIG_PATH=/home/secrets/auth_config.yaml \
   APPLICATIONINSIGHTS_CONNECTION_STRING="@Microsoft.KeyVault(VaultName=${KV_NAME};SecretName=appinsights-connection-string)" \
   >/dev/null
+# No AUTH_CONFIG_PATH app setting: login is Azure App Service Easy Auth (Entra
+# ID), not a credential file. The old AUTH_CONFIG_PATH=/home/secrets/auth_config.yaml
+# pointed at a non-existent path on the Linux container and surfaced as a bogus
+# C:/Program Files/Git/home/secrets/... path under Git-Bash. If a prior run set
+# it on the live app, clear it (see PR "Verify after merge").
 # NOTE: /home is the App Service persistent share — survives restarts. For the
 # Postgres flip, set DB_BACKEND=postgres and
 # PLATFORM_DATABASE_URL="@Microsoft.KeyVault(VaultName=${KV_NAME};SecretName=platform-database-url)".

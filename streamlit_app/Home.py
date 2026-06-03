@@ -23,13 +23,12 @@ if str(_PLATFORM_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 import pandas as pd
 import streamlit as st
-from streamlit_app.components.branding import page_header
 from streamlit_app.components.sidebar import render_sidebar
 
 from db import ensure_db
 from modules.dashboard.queries import get_dashboard_data
 from modules.invoicing.crud import get_ar_aging_report, get_ar_aging_summary
-from streamlit_app.auth import require_auth, show_logout_button
+from streamlit_app.auth import require_auth
 from modules.activity_formatter import format_activity
 from streamlit_app.components.formatters import (
     days_until,
