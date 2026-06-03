@@ -203,6 +203,10 @@ def commit_transactions(
     inserted = 0
     skipped = 0
 
+    # Display label for the account column, e.g. "Bank of America ...1234".
+    # Resolved once from the bank_connections row (not the bare connection id).
+    account_label = _get_account_label(conn, bank_connection_id)
+
     for txn in transactions:
         account_type = "Debit" if txn["amount"] < 0 else "Credit"
         month_val = int(txn["txn_date"].split("-")[1])
@@ -216,7 +220,7 @@ def commit_transactions(
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'csv', ?, ?, ?, ?, ?, datetime('now'))",
             (
                 txn["txn_date"],
-                f"BofA ...{bank_connection_id}",  # placeholder, overwritten below
+                account_label,
                 account_type,
                 txn["description"],
                 txn["amount"],

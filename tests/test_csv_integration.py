@@ -149,6 +149,8 @@ class TestFullRoundTrip:
         assert r0["source"] == "csv"
         assert r0["bank_connection_id"] == bc_id
         assert r0["sync_run_id"] == run_id
+        # Account label is the institution + mask, not a bare-id placeholder.
+        assert r0["account"] == "Bank of America ...1234"
         assert r0["auto_categorized"] == 1
         assert r0["needs_review"] == 0
 
@@ -157,6 +159,24 @@ class TestFullRoundTrip:
         assert unknown["expense_category"] is None
         assert unknown["auto_categorized"] == 0
         assert unknown["needs_review"] == 1
+
+    def test_account_label_uses_bank_connection_not_placeholder(self, db):
+        """Committed rows carry the real account label, not a bare-id placeholder.
+
+        Regression: commit_transactions stored ``f"BofA ...{bank_connection_id}"``
+        — a placeholder the code claimed it would "overwrite below" but never did,
+        leaving the ``_get_account_label`` helper dead. The account column should
+        instead read "<institution> ...<mask>".
+        """
+        bc_id = get_or_create_bank_connection(db, "Bank of America", "1234", "checking")
+        run_id = create_sync_run(db, bc_id, "label_test.csv")
+        txns, _ = parse_bofa_csv(SAMPLE_CSV)
+        txns = categorize_parsed(txns, db)
+        commit_transactions(db, txns, run_id, bc_id)
+
+        accounts = {r["account"] for r in db.execute("SELECT account FROM transactions")}
+        assert accounts == {"Bank of America ...1234"}, accounts
+        assert not any("BofA ..." in (a or "") for a in accounts), accounts
 
     def test_dedup_on_reimport(self, db):
         """Re-importing the same CSV should skip all duplicates."""
