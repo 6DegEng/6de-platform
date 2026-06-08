@@ -1656,6 +1656,7 @@ def render_timeline_view(projects: Sequence) -> None:
             autorange="reversed",  # earliest start at the top
             title="",
             tickfont=dict(size=11),
+            automargin=True,  # 3a smoke #4: keep long "<job> — <name>" labels intact
         ),
         margin=dict(l=10, r=10, t=20, b=10),
         plot_bgcolor="white",

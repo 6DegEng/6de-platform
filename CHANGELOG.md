@@ -191,6 +191,103 @@ Cross-platform data-quality fixes surfaced by the UX audit (`platform_ux_audit_2
 
 ### Tests
 - **`tests/test_activity_nan_safe.py`** (new, 23 tests): Covers `sanitize_details()` (NaN, Inf, nested values), `format_activity()` (all entity types), and integration through the project CRUD layer.
+
+## Session 3b/3c — Project info capture + SharePoint mirror — 2026-05-23
+
+Two adjacent feature passes on `feature/project-info-capture`, ending at v3.5. Session 3b turns the Projects page into a project knowledge base; 3c writes deterministic per-project markdown and a 22-column portfolio xlsx to SharePoint with sha256 short-circuiting. Auto-trigger on mutation is deferred — regen today is manual (sidebar button or `scripts/regen_mirrors.py`).
+
+### Session 3b — Project info capture
+
+#### Schema (`24235a8`)
+- New tables: `project_notes`, `project_contacts`, `project_updates` — all CASCADE-FK'd to `projects(id)` with per-table `idx_*_project` indexes.
+- `projects.status` CHECK rebuilt from 5 → 10 values: `prospect`, `active`, `drafting`, `ahj_permitting`, `inspection`, `revisions`, `on_hold`, `completed`, `cancelled`, `archived`. Rebuild gated behind `_meta.projects_status_expanded` so it runs once. Pre-existing IDs preserved; CASCADE FKs (milestones, proposals, invoices, permits) stay valid.
+- `priority`, `action_by`, `next_action`, `percent_complete`, `contact_name` were already in `_ALTER_COLUMNS` from prior sessions — no migration needed for those.
+
+#### Service layer (`7c6122f`)
+- `modules/projects/workflow.py`: `STATUS_TRANSITIONS` map, `PRIORITY_VALUES/LABELS/COLORS`, percent-complete clamp helper. Archived → active requires explicit `unarchive=True`.
+- `modules/projects/crud.py:update_project`: transition validation + `status_changed` activity_log row distinct from generic `updated`.
+- `modules/projects/{notes,contacts,updates}.py`: new CRUD modules. Each insert writes an `activity_log` row (`note_added`, `contact_added`, `user_update` with category) so the 3a Activity tab unifies system events + user-authored content.
+
+#### UI (`6c864de`)
+- Project detail tabs reorganized to: Details · Notes · Contacts · Updates · Activity · Milestones · Calculations · Documents · Edit.
+- Top metadata row in Details: Priority pill, % Complete bar, Action By, Next Action.
+- Add-note / add-contact / add-update forms route through the service layer; no raw SQL in pages.
+
+#### Table view extensions (`62e960f`, `fe4be3e`, `ac8db27`, `b2a8543`)
+- Priority pill column + % Complete bar column in AgGrid via JsCode renderers. Same renderer mechanism fixes 3a Chrome smoke #1 (status `<span>` HTML was being escaped).
+- `lifecycle_bucket` computed column with group-by toggle. Mapping in `modules/status_colors.py:STATUS_TO_BUCKET`.
+- Centralized status/priority palette in `modules/status_colors.py` with WCAG-AA contrast gate.
+- Saved Views: `modules/views/crud.py` + `tests/test_saved_views.py`. SQLite `ALTER TABLE` rename via the legacy path for older schema versions.
+- Density toggle + multi-select + bulk-update bar + per-column persistence.
+
+#### Legacy importer (`1e00bff`)
+- `scripts/import_legacy_xlsx.py` reads `Project_Tracker_2026.xlsx` (sheet "Projects", row-3 headers). `--dry-run` default; `--commit` writes; `--since YYYY-MM-DD` filter.
+- Idempotent: re-running `--commit` is a no-op when data already imported.
+- `docs/import/legacy_status_map.md` documents the legacy→platform value conversion (status + priority).
+- Never run with `--commit` autonomously — Juan retains that decision.
+
+#### Tests
+- +200 tests across `test_project_notes_contacts_updates`, `test_project_workflow`, `test_projects_inline_edit`, `test_projects_activity`, `test_import_legacy`, `test_saved_views`, `test_project_grid_bulk`, `test_status_colors`, `test_single_ply_attachment`.
+- Full suite at end of 3b/3c work: **356/356 passing in 12.65s**.
+
+### Session 3c — SharePoint mirror
+
+#### Renderers (`7cc0f8a`)
+- `modules/mirror/markdown.py`: pure `render_project_summary()` → LF-only markdown with banner + footer (day-granular date), sorted contacts/updates/notes for byte-identical determinism.
+- `modules/mirror/xlsx.py`: pure `render_portfolio_overview()` → 22-column workbook mirroring legacy `Project_Tracker_2026.xlsx`. Conditional formatting: status fill, priority fill, % complete data bar, outstanding+completed red text. A1 bold-red banner. `Generated` sheet with metadata.
+
+#### Upload layer (`7cc0f8a`)
+- `modules/mirror/sync.py`: `sync_project_markdown`, `sync_portfolio_xlsx`, `sync_all` with sha256 short-circuit via `db/.mirror_state.json`. Stub-mode falls back to `db/.snapshots/` for offline-readable artifacts.
+- Activity log: `action='mirror_uploaded'` on every upload. Portfolio uses `entity_type='portfolio', entity_id=0` as the NOT-NULL-FK sentinel.
+
+#### Trigger surface (`7cc0f8a`)
+- Sidebar "Regenerate snapshots" button on `Home.py` → `sync_all()` with spinner + result counts.
+- `scripts/regen_mirrors.py` CLI: `--all` / `--project ID` / `--portfolio-only` with `--commit` / `--dry-run` (dry-run default).
+- **Deferred:** on-mutation auto-trigger with 60s debouncer + background thread. Reasons in `docs/qa/session_3c_verification.md`.
+
+#### Tests
+- `tests/test_mirror_markdown.py` (deterministic, LF endings, sorted lists, placeholders for empty sections).
+- `tests/test_mirror_xlsx.py` (byte-identical across renders, header shape, conditional formatting rules attached).
+- `tests/test_mirror_sync.py` (sha256 short-circuit, mutation re-triggers upload, missing-project handling, activity_log row written).
+- 36 tests; all green.
+
+### Calculator addition (`4295bb1`)
+- Single-Ply Attachment calc (ASCE 7-22 / RAS 137) added with full memo renderer. 60 new tests under `test_single_ply_attachment.py` covering Kh / qh / tributary, allowable Fv, zone pressures + spacing, sensitivities, validations, memo render. Independent of 3b/3c but landed in the same branch.
+
+### Repo housekeeping (`451df61`, `11b52d3`, `63c29dd`, `556e035`)
+- AppTest tests no longer hit the live DB: `PLATFORM_DB_PATH` env-var caching defeated `monkeypatch.setenv`; patch `config` directly and clear `ensure_db` cache (fixes 3a deferred item).
+- `datetime.utcnow()` deprecation removed across 5 `_now()` helpers (fixes flaky `test_list_project_activity_paginates`).
+- Read-only audit scripts: `scripts/audit_completed_projects.py`, `scripts/audit_disk_only_projects.py`. Run output captured in `docs/qa/session_3b_verification.md` "Open items".
+- Research deep-dives: `Feature_Research/Hosting_and_Integration_Roadmap.md`, `Odoo_Deep_Dive.md`, `Panamerican_Monday_Deep_Dive.md`. `.gitattributes` set to lock line endings to LF for markdown.
+
+### 3a Chrome smoke (5 findings) — resolution
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Status cell `<span>` HTML escaped | **Fixed** — JsCode renderer |
+| 2 | Table headers truncated `J..`, `S..` | **Fixed** — min_width per column |
+| 3 | AG Grid `#200` enterprise-module errors | **Open** — community vs enterprise tradeoff (see verification doc) |
+| 4 | Timeline y-axis labels clipped | **Fixed** — `automargin=True` on yaxis |
+| 5 | Vega-Lite "Infinite extent" warnings | **Fixed** — `df["Count"].sum() > 0` guard |
+| 6 | Flaky `test_list_project_activity_paginates` | **Fixed** — utcnow → `datetime.now(timezone.utc)` |
+
+### Deferred
+- AG Grid #200 enterprise-module strip-or-enable decision (smoke #3).
+- Mirror auto-trigger on mutation (3c subagent 5 remainder).
+- Live SharePoint smoke checklist for 3c (a–f in the prompt) pending next browser session with `.env` populated.
+- 19 completed projects with live folders under `01_ Active Projects/` (manual move to `00_Archive/`).
+- 3 orphan folders not in DB (`260304 - Buena Vista`, `260409 - 1390 S Ocean Blvd`, `260413 - 3107 PGA Blvd`) — backfill via legacy importer or archive.
+- 31 unclassified subfolder names in backfill scanner heuristic.
+
+### Verification
+- `docs/qa/session_3b_verification.md`
+- `docs/qa/session_3c_verification.md`
+
+### Version
+- v3.4 → **v3.5** (bumped in `streamlit_app/Home.py`).
+
+---
+
 ## Session 3a — Projects page UI uplift — 2026-05-23
 
 The Projects page goes from a single vertical-expander list to a Monday-style 4-view board: Table / Kanban / Timeline / Calendar. Pilot module — the same pattern is planned for CRM, Bids, and Permits in later sessions.
