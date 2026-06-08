@@ -1,0 +1,74 @@
+name: Deploy to Azure
+
+# Build the container image in ACR and roll the App Service container on every
+# push to main (and on manual dispatch). This replaces the manual
+# `az acr build` + `az webapp restart` step after a merge.
+#
+# AUTH: GitHub OIDC -> Azure via azure/login@v2 with a *federated credential*,
+# so NO long-lived password/secret is stored in GitHub. The three repo secrets
+# below hold only identifiers (not credentials):
+#   AZURE_CLIENT_ID        app registration / user-assigned identity client id
+#   AZURE_TENANT_ID        Entra tenant id
+#   AZURE_SUBSCRIPTION_ID  target subscription id
+#
+# One-time setup (create the identity, the GitHub federated credential, the
+# role assignments, and these three secrets) is GATED — see the PR description's
+# "NEEDS JUAN — one-time setup" section. Until that setup exists this workflow
+# is inert: the Azure login step fails closed and nothing is deployed.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never overlap deploys; let an in-flight run finish before the next starts.
+concurrency:
+  group: deploy-azure-main
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # required to request the OIDC token for azure/login
+  contents: read    # required for actions/checkout
+
+env:
+  ACR_NAME: sixdeacrjc
+  IMAGE: 6de-platform:latest
+  RESOURCE_GROUP: 6de-platform-rg
+  WEBAPP_NAME: 6de-platform-jc
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC — no stored secret)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build + push image in ACR
+        # ACR Tasks builds server-side from the repo Dockerfile and pushes the
+        # tag — no Docker daemon needed on the runner. (`az` is preinstalled.)
+        run: az acr build --registry "$ACR_NAME" --image "$IMAGE" .
+
+      - name: Restart the web app to pull the new image
+        run: az webapp restart --name "$WEBAPP_NAME" --resource-group "$RESOURCE_GROUP"
+
+      - name: Verify health
+        # Poll the Streamlit liveness endpoint until 200 (cold pull ~30-90s).
+        # Fails the job if the new container never comes up.
+        run: |
+          url="https://${WEBAPP_NAME}.azurewebsites.net/_stcore/health"
+          for i in $(seq 1 24); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$url" || true)
+            echo "health: $code"
+            if [ "$code" = "200" ]; then echo "App is healthy."; exit 0; fi
+            sleep 8
+          done
+          echo "Health check did not reach 200 in time." >&2
+          exit 1
