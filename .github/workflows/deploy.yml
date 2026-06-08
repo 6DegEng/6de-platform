@@ -4,7 +4,7 @@ name: Deploy to Azure
 # push to main (and on manual dispatch). This replaces the manual
 # `az acr build` + `az webapp restart` step after a merge.
 #
-# AUTH: GitHub OIDC -> Azure via azure/login@v2 with a *federated credential*,
+# AUTH: GitHub OIDC -> Azure via azure/login@v3 with a *federated credential*,
 # so NO long-lived password/secret is stored in GitHub. The three repo secrets
 # below hold only identifiers (not credentials):
 #   AZURE_CLIENT_ID        app registration / user-assigned identity client id
@@ -42,10 +42,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Azure login (OIDC — no stored secret)
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
