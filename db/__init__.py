@@ -231,6 +231,15 @@ def _store_fingerprint(conn: sqlite3.Connection, fingerprint: str) -> None:
 
 
 def _apply_alter_columns(conn: sqlite3.Connection) -> None:
+    if _is_postgres():
+        # The pg adapter translates ADD COLUMN to ADD COLUMN IF NOT EXISTS,
+        # so a duplicate column can't raise here. Don't swallow errors —
+        # any OperationalError on this path is a real failure (auth,
+        # connection, permissions) that must not be masked, or the schema
+        # fingerprint would be stored as if the migration succeeded.
+        for table, col, col_type in _ALTER_COLUMNS:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        return
     for table, col, col_type in _ALTER_COLUMNS:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")

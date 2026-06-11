@@ -178,11 +178,9 @@ def translate_sql(sql: str, has_params: bool) -> str:
     parts = _LITERAL_RE.split(sql)
     for i in range(0, len(parts), 2):
         parts[i] = _translate_outside_literals(parts[i], has_params)
-        if has_params:
-            # literal segments need % doubled too (psycopg mogrifies the
-            # whole statement when parameters are present)
-            pass
     if has_params:
+        # literal segments need % doubled too — psycopg mogrifies the whole
+        # statement when parameters are present
         for i in range(1, len(parts), 2):
             parts[i] = parts[i].replace("%", "%%")
     sql = "".join(parts)
@@ -304,6 +302,7 @@ class PgCursor:
         self._cur = conn._pg.cursor()
         self.lastrowid: int | None = None
         self._synthetic: list[Row] | None = None
+        self._row_meta: tuple | None = None
 
     # -- sqlite PRAGMA emulation ---------------------------------------------
     def _emulate_pragma(self, sql: str) -> bool:
@@ -336,6 +335,7 @@ class PgCursor:
     # -- DBAPI surface ------------------------------------------------------
     def execute(self, sql: str, params=None):
         self._synthetic = None
+        self._row_meta = None
         if re.match(r"^\s*PRAGMA\b", sql, flags=re.IGNORECASE) and \
                 self._emulate_pragma(sql):
             return self
@@ -375,9 +375,15 @@ class PgCursor:
         return self
 
     def _wrap_rows(self, raw_rows):
-        desc = self._cur.description
-        cols = [d.name for d in desc] if desc else []
-        index = {c.lower(): i for i, c in enumerate(cols)}
+        # cols/index are derived once per result set (reset in execute), not
+        # per fetch call — fetchone() in a loop would otherwise rebuild them
+        # for every row.
+        if self._row_meta is None:
+            desc = self._cur.description
+            cols = [d.name for d in desc] if desc else []
+            index = {c.lower(): i for i, c in enumerate(cols)}
+            self._row_meta = (cols, index)
+        cols, index = self._row_meta
         return [Row(cols, index, r) for r in raw_rows]
 
     def fetchone(self):
@@ -438,6 +444,16 @@ class PgConnection:
         self.row_factory = None  # accepted, ignored (rows are always Row)
         try:
             self._pg = psycopg.connect(conninfo, autocommit=True)
+        except Exception as exc:  # noqa: BLE001
+            # Never re-raise connect errors verbatim: libpq DSN-parse errors
+            # can echo the conninfo string, which embeds the password.
+            host = getattr(getattr(exc, "diag", None), "message_primary", None)
+            raise sqlite3.OperationalError(
+                "could not connect to the configured Postgres server "
+                f"(schema {schema!r}): {type(exc).__name__}"
+                + (f": {host}" if host and conninfo not in str(host) else "")
+            ) from None
+        try:
             if schema != "public":
                 self._pg.execute(
                     f'CREATE SCHEMA IF NOT EXISTS "{schema}"'

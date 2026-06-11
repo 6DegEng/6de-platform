@@ -17,11 +17,31 @@ from db import get_connection, init_db  # noqa: E402
 def _drop_stale_pg_test_schemas():
     """On the postgres backend each tmp db_path maps to a throwaway t_<hash>
     schema. Drop leftovers from previous runs once per session so the dev
-    database doesn't accumulate them."""
+    database doesn't accumulate them.
+
+    Safety: the suite creates and drops schemas on whatever database
+    PLATFORM_DATABASE_URL points at, so refuse to run against a non-local
+    server (e.g. a production URL still exported in the shell) unless
+    explicitly allowed via PLATFORM_PG_TEST_ALLOW_REMOTE=1."""
+    import os
+
     import config
 
     if config.DB_BACKEND == "postgres":
         import psycopg
+        from psycopg import sql
+
+        host = psycopg.conninfo.conninfo_to_dict(
+            config.PLATFORM_DATABASE_URL
+        ).get("host", "")
+        local = host in ("localhost", "127.0.0.1", "::1")
+        if not local and os.environ.get("PLATFORM_PG_TEST_ALLOW_REMOTE") != "1":
+            pytest.exit(
+                f"Refusing to run the test suite against non-local Postgres "
+                f"host {host!r} — it creates and drops schemas. Set "
+                f"PLATFORM_PG_TEST_ALLOW_REMOTE=1 only if you are sure.",
+                returncode=2,
+            )
 
         with psycopg.connect(config.PLATFORM_DATABASE_URL, autocommit=True) as pg:
             rows = pg.execute(
@@ -29,7 +49,9 @@ def _drop_stale_pg_test_schemas():
                 "WHERE schema_name LIKE 't\\_%'"
             ).fetchall()
             for (name,) in rows:
-                pg.execute(f'DROP SCHEMA "{name}" CASCADE')
+                pg.execute(
+                    sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(name))
+                )
     yield
 
 

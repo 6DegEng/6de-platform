@@ -78,7 +78,7 @@ prints `Ready`.
 ↩ Rollback (removes the server and any data on it):
 `az postgres flexible-server delete --name sixde-platform-db-jc --resource-group 6de-platform-rg --yes`
 
-## Step 2 — let the web app (and only Azure) reach the server
+## Step 2 — open the firewall for Azure-hosted services
 
 ```bash
 az postgres flexible-server firewall-rule create \
@@ -87,8 +87,12 @@ az postgres flexible-server firewall-rule create \
   --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0
 ```
 
-(The 0.0.0.0–0.0.0.0 rule is Azure's special "allow Azure-hosted services"
-rule, not "allow the whole internet".)
+Honest caveat: the 0.0.0.0–0.0.0.0 rule is Azure's "allow Azure-hosted
+services" rule — not the public internet, but it does include *any* Azure
+customer's resources, with only the password standing between them and the
+DB. That's acceptable to get off ephemeral SQLite today; a hardening
+follow-up (VNet integration / private endpoint, or restricting to the App
+Service's outbound IPs) is queued in the aftercare list.
 
 ✅ Verify: `az postgres flexible-server firewall-rule list --name sixde-platform-db-jc --resource-group 6de-platform-rg -o table` shows `AllowAzureServices`.
 
@@ -102,8 +106,12 @@ az keyvault create \
 
 az keyvault secret set \
   --vault-name sixde-kv-jc --name platform-database-url \
-  --value "postgresql://platformadmin:${PGPASS}@sixde-platform-db-jc.postgres.database.azure.com:5432/platform?sslmode=require"
+  --value "postgresql://platformadmin:${PGPASS}@sixde-platform-db-jc.postgres.database.azure.com:5432/platform?sslmode=require" \
+  -o none
 ```
+
+(`-o none` matters — without it, az echoes the secret value, password
+included, into the terminal scrollback.)
 
 ✅ Verify: `az keyvault secret show --vault-name sixde-kv-jc --name platform-database-url --query name -o tsv` prints `platform-database-url`.
 
@@ -179,8 +187,11 @@ az postgres flexible-server firewall-rule create \
 
 ```powershell
 # on Juan's PC, in C:\Users\Juan\code\6de-platform (PowerShell)
+# Pull the connection string from Key Vault — do NOT type the password into
+# the shell (PowerShell persists command history to disk).
+az login   # if not already signed in as info@6de.xyz
 $env:DB_BACKEND = "postgres"
-$env:PLATFORM_DATABASE_URL = "postgresql://platformadmin:<PASSWORD>@sixde-platform-db-jc.postgres.database.azure.com:5432/platform?sslmode=require"
+$env:PLATFORM_DATABASE_URL = az keyvault secret show --vault-name sixde-kv-jc --name platform-database-url --query value -o tsv
 
 # dry-run first — review the per-row report:
 .venv\Scripts\python.exe scripts\import_legacy_xlsx.py --file "C:\Users\Juan\OneDrive - 6th Degree Engineering\Documents - 6th Degree Engineering\06_Engineering\01_Active Projects\Project_Tracker_2026.xlsx"
@@ -198,11 +209,16 @@ duplicates). To start truly fresh, drop and recreate the database:
 `az postgres flexible-server db delete --server-name sixde-platform-db-jc --resource-group 6de-platform-rg --database-name platform --yes`
 then `... db create ... --database-name platform` and restart the app.
 
-Afterwards, close the temporary hole:
+Afterwards, close the temporary hole and clear the connection string from
+the shell (it would otherwise linger — and the test suite refuses to run
+while a non-local PLATFORM_DATABASE_URL is set, by design):
 ```bash
 az postgres flexible-server firewall-rule delete \
   --name sixde-platform-db-jc --resource-group 6de-platform-rg \
   --rule-name juan-home --yes
+```
+```powershell
+Remove-Item Env:PLATFORM_DATABASE_URL; Remove-Item Env:DB_BACKEND
 ```
 
 ## Step 7 — prove the bug is dead
@@ -220,6 +236,9 @@ if the data survives it, the bug is dead.
 
 ## Aftercare (queued, separate session)
 
+- **Network hardening:** replace the AllowAzureServices firewall rule with
+  VNet integration + private endpoint (or restrict to the App Service's
+  outbound IPs). Consider Entra ID auth for the app's DB identity.
 - Nightly `pg_dump` backup to blob storage (script ships in a follow-up PR).
 - Flexible Server has 7-day point-in-time restore built in — that's already
   better than anything SQLite had.
