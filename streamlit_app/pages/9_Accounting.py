@@ -149,7 +149,7 @@ with tab_txn:
 
     # Distinct months for filter
     month_rows = conn.execute(
-        "SELECT DISTINCT strftime('%Y-%m', txn_date) AS m "
+        "SELECT DISTINCT substr(txn_date, 1, 7) AS m "
         "FROM transactions ORDER BY m DESC"
     ).fetchall()
     months = ["All"] + [r["m"] for r in month_rows]
@@ -174,7 +174,7 @@ with tab_txn:
     params: list = [sel_date_from.isoformat(), sel_date_to.isoformat()]
 
     if sel_month != "All":
-        where_clauses.append("strftime('%Y-%m', txn_date) = ?")
+        where_clauses.append("substr(txn_date, 1, 7) = ?")
         params.append(sel_month)
     if sel_category != "All":
         where_clauses.append("expense_category = ?")

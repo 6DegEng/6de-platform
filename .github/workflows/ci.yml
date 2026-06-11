@@ -66,3 +66,44 @@ jobs:
           AUTH_CONFIG_PATH: /tmp/ci_auth.yaml
         run: |
           pytest tests/ -q --tb=short
+
+  tests-postgres:
+    # Same suite against the Postgres backend so both stay green.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform
+          POSTGRES_PASSWORD: platform_ci
+          POSTGRES_DB: platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U platform -d platform"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest against Postgres
+        env:
+          PLATFORM_DB_PATH: /tmp/ci_pytest_pg.db
+          AUTH_CONFIG_PATH: ${{ github.workspace }}/auth_config.example.yaml
+          DB_BACKEND: postgres
+          PLATFORM_DATABASE_URL: postgresql://platform:platform_ci@localhost:5432/platform
+        run: |
+          pytest tests/ -q --tb=short

@@ -756,7 +756,7 @@ with tab_analytics:
     st.subheader("Monthly Trends (Won Opportunities)")
 
     monthly_rows = conn.execute(
-        "SELECT strftime('%Y-%m', updated_at) AS month, "
+        "SELECT substr(updated_at, 1, 7) AS month, "
         "       COUNT(*) AS count, "
         "       COALESCE(SUM(estimated_value), 0) AS total_value "
         "FROM opportunities "

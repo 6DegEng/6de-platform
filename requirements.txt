@@ -6,6 +6,9 @@ pyyaml>=6.0,<7
 streamlit-authenticator>=0.4,<1
 pytest>=8.0,<9
 
+# Phase 8 — persistent Postgres backend (DB_BACKEND=postgres)
+psycopg[binary]>=3.2,<4
+
 # Phase 2 — SharePoint document layer via Microsoft Graph
 msgraph-sdk>=1.0,<2
 azure-identity>=1.15,<2

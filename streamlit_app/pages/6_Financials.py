@@ -352,14 +352,14 @@ with tab_util:
         st.subheader("Monthly Hours Trend")
         monthly_hours = conn.execute(
             "SELECT "
-            "    strftime('%Y-%m', entry_date) AS month, "
+            "    substr(entry_date, 1, 7) AS month, "
             "    ROUND(SUM(CASE WHEN billable = 1 THEN hours ELSE 0 END), 1) "
             "        AS billable, "
             "    ROUND(SUM(CASE WHEN billable = 0 THEN hours ELSE 0 END), 1) "
             "        AS non_billable "
             "FROM time_entries "
             "WHERE entry_date BETWEEN ? AND ? "
-            "GROUP BY strftime('%Y-%m', entry_date) "
+            "GROUP BY substr(entry_date, 1, 7) "
             "ORDER BY month",
             (util_from.isoformat(), util_to.isoformat()),
         ).fetchall()

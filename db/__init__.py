@@ -27,6 +27,7 @@ from config import (
     DB_BACKEND,
     DB_PATH,
     LEGACY_DB_PATH,
+    PLATFORM_DATABASE_URL,
     SCHEMA_PATH,
 )
 from modules.accounting.categorization import seed_rules_from_vba
@@ -92,14 +93,19 @@ def _check_backend() -> None:
     if DB_BACKEND == "sqlite":
         return
     if DB_BACKEND == "postgres":
-        raise NotImplementedError(
-            "DB_BACKEND=postgres is reserved for Phase 8 (Azure Database for PostgreSQL). "
-            "See PLATFORM_GOAL_v1.md Phase 8 for the migration plan. "
-            "For now, leave DB_BACKEND unset or set to 'sqlite'."
-        )
+        if not PLATFORM_DATABASE_URL:
+            raise ValueError(
+                "DB_BACKEND=postgres requires PLATFORM_DATABASE_URL to be set, "
+                "e.g. postgresql://user:pass@host:5432/platform?sslmode=require"
+            )
+        return
     raise ValueError(
         f"Unknown DB_BACKEND={DB_BACKEND!r}. Expected 'sqlite' or 'postgres'."
     )
+
+
+def _is_postgres() -> bool:
+    return DB_BACKEND == "postgres"
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +121,8 @@ def _migrate_legacy_db_if_needed() -> None:
     first WAL-mode connection. Any uncommitted WAL data is dropped, which
     is acceptable for a one-time migration of a single-user dev DB.
     """
+    if _is_postgres():
+        return
     if DB_PATH.exists():
         return
     if not LEGACY_DB_PATH.exists():
@@ -138,8 +146,17 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     - isolation_level=None: autocommit mode; explicit BEGIN/COMMIT optional
     - check_same_thread=False: allows Streamlit's thread-pool to share the conn
     - WAL journal_mode + NORMAL synchronous: cooperative concurrent reads/writes
+
+    With DB_BACKEND=postgres, returns a pg_compat.PgConnection instead — a
+    drop-in object that speaks the same sqlite3 API (execute with ``?``
+    placeholders, Row access by name, lastrowid, commit/close). Each distinct
+    db_path maps to its own Postgres schema for test isolation.
     """
     _check_backend()
+    if _is_postgres():
+        from db import pg_compat
+
+        return pg_compat.connect(PLATFORM_DATABASE_URL, db_path, DB_PATH)
     path = str(db_path or DB_PATH)
     conn = sqlite3.connect(
         path,
@@ -214,6 +231,15 @@ def _store_fingerprint(conn: sqlite3.Connection, fingerprint: str) -> None:
 
 
 def _apply_alter_columns(conn: sqlite3.Connection) -> None:
+    if _is_postgres():
+        # The pg adapter translates ADD COLUMN to ADD COLUMN IF NOT EXISTS,
+        # so a duplicate column can't raise here. Don't swallow errors —
+        # any OperationalError on this path is a real failure (auth,
+        # connection, permissions) that must not be masked, or the schema
+        # fingerprint would be stored as if the migration succeeded.
+        for table, col, col_type in _ALTER_COLUMNS:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        return
     for table, col, col_type in _ALTER_COLUMNS:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
@@ -242,6 +268,10 @@ def _expand_project_status_check(conn: sqlite3.Connection) -> None:
     schema.sql). If it fails with a CHECK violation, rebuild the table
     using the SQLite rename pattern.
     """
+    if _is_postgres():
+        # A Postgres schema is always created fresh from the current
+        # schema.sql, which already carries the expanded CHECK.
+        return
     _ensure_meta_table(conn)
     row = conn.execute(
         "SELECT value FROM _meta WHERE key = 'projects_status_expanded'"
@@ -489,7 +519,7 @@ def _ensure_db_impl() -> sqlite3.Connection:
     _check_backend()
     _migrate_legacy_db_if_needed()
 
-    new_db = not DB_PATH.exists()
+    new_db = False if _is_postgres() else not DB_PATH.exists()
     conn = get_connection()
 
     _ensure_meta_table(conn)

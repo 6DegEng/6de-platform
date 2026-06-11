@@ -131,8 +131,7 @@ def test_inline_edit_emits_activity_log(db):
 
     after = db.execute(
         "SELECT COUNT(*) FROM activity_log "
-        "WHERE entity_type='project' AND entity_id=? AND action='updated' "
-        "ORDER BY id DESC",
+        "WHERE entity_type='project' AND entity_id=? AND action='updated'",
         (pid,),
     ).fetchone()[0]
     assert after == before + 1, (
