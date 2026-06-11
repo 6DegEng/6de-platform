@@ -123,10 +123,10 @@ with tab_aging:
 
     # Bucket cards with color coding
     bucket_colors = {
-        "current": "#198754",   # green
-        "1-30": "#fd7e14",      # yellow-orange
-        "31-60": "#e67e22",     # orange
-        "61-90": "#dc3545",     # red
+        "current": "#62C384",   # green
+        "1-30": "#E5A54E",      # yellow-orange
+        "31-60": "#E08A45",     # orange
+        "61-90": "#F2917F",     # red
         "90+": "#8b0000",       # dark red
     }
     bucket_labels = {
@@ -144,14 +144,14 @@ with tab_aging:
         label = bucket_labels[bucket]
         col.markdown(
             f"<div style='border-left:4px solid {color};padding:8px 12px;'>"
-            f"<span style='font-size:0.85rem;color:#6c757d;'>{label}</span><br>"
+            f"<span style='font-size:0.85rem;color:#C6BCAE;'>{label}</span><br>"
             f"<span style='font-size:1.3rem;font-weight:700;'>"
             f"{format_currency(amount)}</span></div>",
             unsafe_allow_html=True,
         )
     bc6.markdown(
-        f"<div style='border-left:4px solid #0d6efd;padding:8px 12px;'>"
-        f"<span style='font-size:0.85rem;color:#6c757d;'>Total</span><br>"
+        f"<div style='border-left:4px solid #8FB8F2;padding:8px 12px;'>"
+        f"<span style='font-size:0.85rem;color:#C6BCAE;'>Total</span><br>"
         f"<span style='font-size:1.3rem;font-weight:700;'>"
         f"{format_currency(aging_total)}</span></div>",
         unsafe_allow_html=True,
@@ -165,7 +165,7 @@ with tab_aging:
         ar_data = []
         for r in aging_rows:
             bucket = r["aging_bucket"]
-            color = bucket_colors.get(bucket, "#6c757d")
+            color = bucket_colors.get(bucket, "#C6BCAE")
             ar_data.append({
                 "Invoice": r["invoice_number"],
                 "Job #": r["job_number"],
@@ -187,10 +187,10 @@ with tab_aging:
                 "Paid": "${:,.2f}",
                 "Balance Due": "${:,.2f}",
             }).map(
-                lambda _: "color: #198754",
+                lambda _: "color: #62C384",
                 subset=pd.IndexSlice[df_ar["Bucket"] == "Current", :],
             ).map(
-                lambda _: "color: #dc3545; font-weight: 600",
+                lambda _: "color: #F2917F; font-weight: 600",
                 subset=pd.IndexSlice[df_ar["Days Past Due"] > 60, :],
             ),
             use_container_width=True,
@@ -238,7 +238,7 @@ with tab_profit:
         def _highlight_margin(val):
             """Highlight negative margins in red."""
             if isinstance(val, (int, float)) and val < 0:
-                return "color: #dc3545; font-weight: 600"
+                return "color: #F2917F; font-weight: 600"
             return ""
 
         st.dataframe(
@@ -468,7 +468,7 @@ with tab_revenue:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#adb5bd;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Financials &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",

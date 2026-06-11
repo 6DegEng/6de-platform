@@ -215,9 +215,9 @@ with tab_txn:
         def _color_amount(val):
             if isinstance(val, (int, float)):
                 if val > 0:
-                    return "color: #198754; font-weight: 600"
+                    return "color: #62C384; font-weight: 600"
                 if val < 0:
-                    return "color: #dc3545; font-weight: 600"
+                    return "color: #F2917F; font-weight: 600"
             return ""
 
         st.dataframe(
@@ -277,13 +277,13 @@ with tab_cashflow:
         st.markdown("**Monthly Income vs. Expenses**")
         chart_df = df_cf[["Month", "Income", "Outflow"]].copy()
         chart_df = chart_df.set_index("Month")
-        st.bar_chart(chart_df, color=["#198754", "#dc3545"])
+        st.bar_chart(chart_df, color=["#62C384", "#F2917F"])
 
         # Net line chart
         st.markdown("**Monthly Net Cashflow**")
         net_df = df_cf[["Month", "Net"]].copy()
         net_df = net_df.set_index("Month")
-        st.line_chart(net_df, color=["#0d6efd"])
+        st.line_chart(net_df, color=["#8FB8F2"])
 
         # Expense breakdown by category
         st.markdown("---")
@@ -305,7 +305,7 @@ with tab_cashflow:
                 "total": "Total",
             })
             cat_df = cat_df.set_index("Category")
-            st.bar_chart(cat_df, horizontal=True, color=["#dc3545"])
+            st.bar_chart(cat_df, horizontal=True, color=["#F2917F"])
 
             # Detail table
             st.markdown("")
@@ -379,10 +379,10 @@ with tab_recurring:
         # Style urgency column
         def _style_urgency(row):
             color_map = {
-                "red": "color: #dc3545; font-weight: 700",
-                "orange": "color: #fd7e14; font-weight: 600",
-                "green": "color: #198754",
-                "gray": "color: #adb5bd",
+                "red": "color: #F2917F; font-weight: 700",
+                "orange": "color: #E5A54E; font-weight: 600",
+                "green": "color: #62C384",
+                "gray": "color: #C6BCAE",
             }
             uc = row["_urgency_color"]
             style = color_map.get(uc, "")
@@ -920,9 +920,9 @@ with tab_csv_import:
 
             def _style_import_status(val):
                 if val == "Auto":
-                    return "color: #198754; font-weight: 600"
+                    return "color: #62C384; font-weight: 600"
                 if val == "Review":
-                    return "color: #fd7e14; font-weight: 600"
+                    return "color: #E5A54E; font-weight: 600"
                 return ""
 
             st.dataframe(
@@ -1031,7 +1031,7 @@ with tab_csv_import:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#adb5bd;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Accounting &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",

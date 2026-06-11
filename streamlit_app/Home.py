@@ -54,53 +54,33 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* Tighten top padding */
+    /* Structural only — ALL colors come from assets/theme.css +
+       components/palette.py (WCAG AA verified by scripts/check_contrast.py).
+       The old light-theme card colors here were the "$0 invisible on dark"
+       bug: near-black metric values forced onto dark theme cards. */
     .block-container { padding-top: 1.5rem; }
 
-    /* Metric cards */
-    [data-testid="stMetric"] {
-        background: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 8px;
-        padding: 16px 20px;
-    }
-    [data-testid="stMetricLabel"] {
-        font-weight: 600;
-        font-size: 0.9rem;
-        color: #495057;
-    }
-    /* A2 fix: explicit dark color so values render on the light card
-       background even when the user's system / Streamlit theme defaults
-       to a light foreground colour. */
-    [data-testid="stMetricValue"],
-    [data-testid="stMetricValue"] > div {
-        font-size: 1.6rem;
-        font-weight: 700;
-        color: #212529 !important;
-    }
-    [data-testid="stMetricDelta"] {
-        color: #495057 !important;
+    [data-testid="stMetricLabel"] { font-weight: 600; font-size: 0.9rem; }
+    [data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {
+        font-size: 1.7rem;
     }
 
-    /* Sidebar branding */
     [data-testid="stSidebar"] [data-testid="stMarkdown"] h1 {
         font-size: 1.3rem;
         padding-bottom: 0.4rem;
-        border-bottom: 2px solid #0d6efd;
+        border-bottom: 2px solid var(--6de-accent-border);
     }
 
-    /* Alert boxes — slightly rounded */
     .stAlert { border-radius: 6px; }
 
-    /* Activity feed items */
     .activity-item {
         padding: 8px 0;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid var(--6de-border);
         font-size: 0.88rem;
     }
     .activity-item:last-child { border-bottom: none; }
     .activity-time {
-        color: #6c757d;
+        color: var(--6de-muted);
         font-size: 0.78rem;
     }
     </style>
@@ -156,7 +136,7 @@ with c3:
     st.metric("Overdue Invoices", overdue_val)
     if data["overdue_amount"] > 0:
         st.markdown(
-            f"<span style='color:#dc3545;font-weight:600;'>"
+            f"<span style='color:#F2917F;font-weight:600;'>"
             f"{format_currency(data['overdue_amount'])} past due</span>",
             unsafe_allow_html=True,
         )
@@ -168,7 +148,7 @@ with c4:
     st.metric("Expiring Permits", str(permit_count))
     if permit_count > 0:
         st.markdown(
-            f"<span style='color:#fd7e14;font-weight:600;'>"
+            f"<span style='color:#E5A54E;font-weight:600;'>"
             f"{permit_count} within 30 days</span>",
             unsafe_allow_html=True,
         )
@@ -216,7 +196,7 @@ with c12:
     st.metric("Bid Deadlines", f"{bid_count} upcoming")
     if bid_count > 0:
         st.markdown(
-            f"<span style='color:#fd7e14;font-weight:600;'>"
+            f"<span style='color:#E5A54E;font-weight:600;'>"
             f"{bid_count} within 14 days</span>",
             unsafe_allow_html=True,
         )
@@ -231,11 +211,11 @@ aging_summary = get_ar_aging_summary(conn)
 aging_total = sum(aging_summary.values())
 
 _bucket_colors = {
-    "current": "#198754",
-    "1-30": "#fd7e14",
-    "31-60": "#e67e22",
-    "61-90": "#dc3545",
-    "90+": "#8b0000",
+    "current": "#62C384",
+    "1-30": "#E5A54E",
+    "31-60": "#E08A45",
+    "61-90": "#F2917F",
+    "90+": "#F2776B",
 }
 _bucket_labels = {
     "current": "Current",
@@ -252,14 +232,14 @@ for _col, (_bucket, _amount) in zip(_ar_cols, aging_summary.items()):
     _label = _bucket_labels[_bucket]
     _col.markdown(
         f"<div style='border-left:4px solid {_color};padding:8px 12px;'>"
-        f"<span style='font-size:0.85rem;color:#6c757d;'>{_label}</span><br>"
+        f"<span style='font-size:0.85rem;color:#C6BCAE;'>{_label}</span><br>"
         f"<span style='font-size:1.3rem;font-weight:700;'>"
         f"{format_currency(_amount)}</span></div>",
         unsafe_allow_html=True,
     )
 ar6.markdown(
-    f"<div style='border-left:4px solid #0d6efd;padding:8px 12px;'>"
-    f"<span style='font-size:0.85rem;color:#6c757d;'>Total</span><br>"
+    f"<div style='border-left:4px solid #8FB8F2;padding:8px 12px;'>"
+    f"<span style='font-size:0.85rem;color:#C6BCAE;'>Total</span><br>"
     f"<span style='font-size:1.3rem;font-weight:700;'>"
     f"{format_currency(aging_total)}</span></div>",
     unsafe_allow_html=True,
@@ -459,7 +439,7 @@ with chart_right:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#adb5bd;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Company Platform &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",

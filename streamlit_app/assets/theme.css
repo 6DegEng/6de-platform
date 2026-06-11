@@ -3,15 +3,22 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  --6de-accent: #B8410F;
+  /* Accent is split by role (see components/palette.py — the verified source
+     of truth, checked by scripts/check_contrast.py):
+     - accent-text: light enough to READ on dark surfaces (7.3:1 on bg)
+     - accent (buttons/fills): deep enough that white text passes AA (6.7:1)
+     - accent-border: underlines/edges (3:1 UI-component rule) */
+  --6de-accent: #A23A0D;
+  --6de-accent-text: #E78A52;
+  --6de-accent-border: #B8410F;
   --6de-accent-dark: #6d3115;
   --6de-accent-soft: rgba(184, 65, 15, 0.14);
   --6de-bg: #15120F;
   --6de-panel: #211B15;
   --6de-panel-2: #2A231C;
   --6de-border: #3a3128;
-  --6de-ink: #EFE9E2;
-  --6de-muted: #B9AFA3;
+  --6de-ink: #F2EDE5;     /* 16.0:1 on bg (was #EFE9E2) */
+  --6de-muted: #C6BCAE;   /* 10.0:1 on bg (was #B9AFA3 at 7.9:1) */
   --6de-font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
@@ -54,24 +61,24 @@ input:focus, textarea:focus { border-color: var(--6de-accent) !important; box-sh
 
 /* Tabs — brand underline on the active tab */
 .stTabs [data-baseweb="tab-highlight"], .stTabs [data-baseweb="tab-border"] { background-color: var(--6de-accent) !important; }
-.stTabs [aria-selected="true"] { color: var(--6de-accent) !important; }
+.stTabs [aria-selected="true"] { color: var(--6de-accent-text) !important; }
 
 /* Radios / checkboxes accent */
 [data-baseweb="radio"] [aria-checked="true"] svg, input[type="radio"], input[type="checkbox"] { accent-color: var(--6de-accent); }
 
 /* Links */
-a, a:visited { color: var(--6de-accent); }
-a:hover { color: var(--6de-accent-dark); }
+a, a:visited { color: var(--6de-accent-text); }
+a:hover { color: var(--6de-ink); }
 
 /* Metric / KPI cards */
 [data-testid="stMetric"] {
   background: var(--6de-panel);
   border: 1px solid var(--6de-border);
-  border-left: 3px solid var(--6de-accent);
+  border-left: 3px solid var(--6de-accent-border);
   border-radius: 12px;
   padding: 16px 18px;
 }
-[data-testid="stMetricValue"] { color: var(--6de-ink); font-weight: 700; }
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] > div { color: var(--6de-ink) !important; font-weight: 700; }
 [data-testid="stMetricLabel"] { color: var(--6de-muted); }
 
 /* Dataframes */
@@ -92,7 +99,7 @@ a:hover { color: var(--6de-accent-dark); }
 .de-page-header p { margin: 3px 0 0; color: var(--6de-muted); font-size: 14px; }
 .de-section-card { background: var(--6de-panel); border: 1px solid var(--6de-border); border-left: 3px solid var(--6de-accent); border-radius: 12px; padding: 18px 20px; margin: 8px 0 16px; }
 .de-section-card > h3 { margin: 0 0 12px; font-size: 16px; color: var(--6de-ink); font-weight: 600; }
-.de-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--6de-accent-soft); color: var(--6de-accent); border: 1px solid var(--6de-accent); }
+.de-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--6de-accent-soft); color: var(--6de-accent-text); border: 1px solid var(--6de-accent-border); }
 .de-empty { text-align: center; color: var(--6de-muted); border: 1px dashed var(--6de-border); border-radius: 12px; padding: 40px 20px; }
 
 /* ---- "VIP office" ambience (subtle; keeps AA contrast) ---- */
@@ -121,11 +128,11 @@ section[data-testid="stMain"] .block-container { position: relative; z-index: 1;
 /* Sidebar: polished brand lockup + warm section labels */
 [data-testid="stSidebarNav"]::before,
 [data-testid="stSidebar"] .de-sidebar-brand {
-  color: var(--6de-accent);
+  color: var(--6de-accent-text);
 }
 [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2 { color: var(--6de-ink); }
 /* sidebar section header labels (markdown bold) in brand tone */
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] strong { color: var(--6de-accent); letter-spacing: 0.02em; }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] strong { color: var(--6de-accent-text); letter-spacing: 0.02em; }
 [data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]:hover { background: var(--6de-accent-soft); border-radius: 8px; }
 /* sidebar footer rule */
 [data-testid="stSidebar"]::after {
