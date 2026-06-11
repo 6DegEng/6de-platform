@@ -1,0 +1,30 @@
+# Local Postgres for platform development and the test suite.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# Then run the app or tests with:
+#   DB_BACKEND=postgres
+#   PLATFORM_DATABASE_URL=postgresql://platform:platform_dev@localhost:5433/platform
+#
+# Port 5433 on purpose — avoids colliding with any system Postgres on 5432.
+# Credentials are dev-only; the real Azure connection string lives in Key Vault.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sixde-pg-dev
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform_dev
+      POSTGRES_DB: platform
+    ports:
+      - "5433:5432"
+    volumes:
+      - sixde_pg_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sixde_pg_dev_data:

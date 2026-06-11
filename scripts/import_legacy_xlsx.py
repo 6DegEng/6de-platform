@@ -399,7 +399,9 @@ def commit_rows(
                 if data:
                     update_project(conn, proj["id"], **data)
 
-    conn.close()
+    # NOTE: ensure_db() returns a cached, process-wide connection. Closing it
+    # here poisons the cache for any later caller in the same process, so we
+    # deliberately leave it open (the process exit closes it).
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +432,7 @@ def run_import(
         conn = ensure_db()
         rows = conn.execute("SELECT job_number FROM projects").fetchall()
         existing_jobs = {r["job_number"] for r in rows}
-        conn.close()
+        # cached shared connection — do not close (see commit_rows)
 
     # Classify each row
     results: list[dict] = []

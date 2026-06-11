@@ -139,13 +139,13 @@ def get_revenue_by_month(
     ye = _year_end(year)
     rows = conn.execute(
         "SELECT "
-        "    strftime('%Y-%m', paid_date) AS month, "
+        "    substr(paid_date, 1, 7) AS month, "
         "    ROUND(SUM(paid_amount), 2) AS total_paid, "
         "    COUNT(*) AS invoice_count "
         "FROM invoices "
         "WHERE status = 'paid' "
         "  AND paid_date BETWEEN ? AND ? "
-        "GROUP BY strftime('%Y-%m', paid_date) "
+        "GROUP BY substr(paid_date, 1, 7) "
         "ORDER BY month",
         (ys, ye),
     ).fetchall()

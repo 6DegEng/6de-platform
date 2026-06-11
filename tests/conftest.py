@@ -13,6 +13,26 @@ if str(_PLATFORM_ROOT) not in sys.path:
 from db import get_connection, init_db  # noqa: E402
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _drop_stale_pg_test_schemas():
+    """On the postgres backend each tmp db_path maps to a throwaway t_<hash>
+    schema. Drop leftovers from previous runs once per session so the dev
+    database doesn't accumulate them."""
+    import config
+
+    if config.DB_BACKEND == "postgres":
+        import psycopg
+
+        with psycopg.connect(config.PLATFORM_DATABASE_URL, autocommit=True) as pg:
+            rows = pg.execute(
+                "SELECT schema_name FROM information_schema.schemata "
+                "WHERE schema_name LIKE 't\\_%'"
+            ).fetchall()
+            for (name,) in rows:
+                pg.execute(f'DROP SCHEMA "{name}" CASCADE')
+    yield
+
+
 @pytest.fixture()
 def db(tmp_path):
     """Yield a fresh in-memory-like DB initialised from schema.sql."""
