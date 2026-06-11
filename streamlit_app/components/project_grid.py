@@ -132,7 +132,7 @@ def _build_status_renderer() -> JsCode:
             const labels = {label_map_js};
             const darkText = {dark_text_js};
             const value = params.value || '';
-            const bg = colors[value] || '#6c757d';
+            const bg = colors[value] || '#C6BCAE';
             const fg = darkText.includes(value) ? '#111827' : '#ffffff';
             const label = labels[value] || value;
             const el = document.createElement('span');
@@ -159,7 +159,7 @@ def _build_priority_renderer() -> JsCode:
             const labels = {label_map_js};
             const value = params.value || '';
             if (!value) return '';
-            const color = colors[value] || '#6B7280';
+            const color = colors[value] || '#C6BCAE';
             const label = labels[value] || value;
             const el = document.createElement('span');
             el.innerHTML = `<span style="color:${{color}};font-weight:600;` +
@@ -178,10 +178,10 @@ def _build_percent_renderer() -> JsCode:
             if (val === null || val === undefined || val === '') return '';
             const pct = Math.round(Number(val));
             const width = Math.min(100, Math.max(0, pct));
-            const color = pct >= 100 ? '#22C55E' : pct >= 50 ? '#3B82F6' : '#F59E0B';
+            const color = pct >= 100 ? '#62C384' : pct >= 50 ? '#8FB8F2' : '#E5A54E';
             const el = document.createElement('div');
             el.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">` +
-                   `<div style="flex:1;background:#e5e7eb;border-radius:4px;height:8px;">` +
+                   `<div style="flex:1;background:#3a3128;border-radius:4px;height:8px;">` +
                    `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
                    `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
             return el;
@@ -371,7 +371,7 @@ def _build_bucket_renderer() -> JsCode:
             const labels = {label_map_js};
             const value = params.value || '';
             if (!value) return '';
-            const bg = colors[value] || '#6c757d';
+            const bg = colors[value] || '#C6BCAE';
             const label = labels[value] || value;
             const el = document.createElement('span');
             el.innerHTML = `<span style="background:${{bg}};color:#fff;` +

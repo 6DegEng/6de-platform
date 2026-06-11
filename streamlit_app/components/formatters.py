@@ -221,8 +221,13 @@ def status_badge(status: str | None, entity_type: str = "project") -> str:
     color_map = _STATUS_COLORS.get(entity_type, _STATUS_COLORS["project"])
     bg = color_map.get(status, "#6c757d")
     label = status.replace("_", " ").title()
+    # Pick black or white text per badge background (WCAG AA) instead of
+    # forcing white onto every fill — white fails on the brighter fills.
+    from modules.status_colors import _auto_fg
+
+    fg = _auto_fg(bg)
     return (
-        f'<span style="background:{bg};color:#fff;padding:2px 8px;'
+        f'<span style="background:{bg};color:{fg};padding:2px 8px;'
         f'border-radius:4px;font-size:0.8em;font-weight:600;">'
         f"{label}</span>"
     )

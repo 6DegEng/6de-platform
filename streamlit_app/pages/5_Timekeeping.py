@@ -835,7 +835,7 @@ with tab_employees:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#adb5bd;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Timekeeping Module &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",

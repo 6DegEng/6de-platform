@@ -16,7 +16,7 @@ from streamlit_app.auth import show_logout_button
 from streamlit_app.components.branding import page_header
 
 _LABEL = (
-    "<span style='font-size:0.75rem;font-weight:700;color:#6c757d;"
+    "<span style='font-size:0.75rem;font-weight:700;color:#C6BCAE;"
     "text-transform:uppercase;letter-spacing:0.05em;'>{}</span>"
 )
 
@@ -93,7 +93,7 @@ def render_sidebar() -> None:
                     st.json(_result["errors"])
         st.divider()
         st.markdown(
-            "<small style='color:#6c757d;'>Juan C. Castillo, P.E.&ensp;|&ensp;"
+            "<small style='color:#C6BCAE;'>Juan C. Castillo, P.E.&ensp;|&ensp;"
             "FL PE #98059</small>",
             unsafe_allow_html=True,
         )
