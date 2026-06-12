@@ -12,7 +12,7 @@ psycopg[binary]>=3.2,<4
 # Phase 2 — SharePoint document layer via Microsoft Graph
 msgraph-sdk>=1.0,<2
 azure-identity>=1.15,<2
-cryptography>=42.0,<46
+cryptography>=46.0,<47
 python-dotenv>=1.0,<2
 
 # Session 3a — Projects page UI uplift (Table / Kanban / Timeline / Calendar)
