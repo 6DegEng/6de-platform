@@ -142,7 +142,11 @@ stats = get_project_stats(conn)
 st.markdown("---")
 cols = st.columns(5)
 cols[0].metric("Total Projects", stats.get("total", 0))
-cols[1].metric("Active", stats.get("active", 0))
+cols[1].metric(
+    "Working",
+    stats.get("working", 0),
+    help="Active + Drafting + AHJ/Permitting + Inspection + Revisions",
+)
 cols[2].metric("Prospects", stats.get("prospect", 0))
 cols[3].metric("On Hold", stats.get("on_hold", 0))
 cols[4].metric("Completed", stats.get("completed", 0))

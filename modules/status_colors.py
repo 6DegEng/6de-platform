@@ -121,6 +121,13 @@ STATUS_TO_BUCKET: dict[str, str] = {
     "archived":       "archived",
 }
 
+# Statuses that count as "working" for dashboard tiles / backlog dollars —
+# the ACTIVE lifecycle bucket. Definition ratified by Juan 2026-06-12
+# (excludes prospect, on_hold, completed, cancelled, archived).
+WORKING_STATUSES: tuple[str, ...] = tuple(
+    s for s, b in STATUS_TO_BUCKET.items() if b == "active"
+)
+
 _FALLBACK_BG = "#6c757d"
 
 

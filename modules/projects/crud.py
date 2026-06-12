@@ -268,11 +268,16 @@ def get_project_stats(conn: sqlite3.Connection) -> dict[str, int]:
 
         {"total": 12, "active": 5, "prospect": 3, ...}
     """
+    from modules.status_colors import WORKING_STATUSES
+
     rows = conn.execute(
         "SELECT status, COUNT(*) AS cnt FROM projects GROUP BY status"
     ).fetchall()
     stats: dict[str, int] = {row["status"]: row["cnt"] for row in rows}
     stats["total"] = sum(stats.values())
+    # "Working" = the ACTIVE lifecycle bucket (active/drafting/ahj_permitting/
+    # inspection/revisions) — definition ratified by Juan 2026-06-12.
+    stats["working"] = sum(stats.get(s, 0) for s in WORKING_STATUSES)
     return stats
 
 
