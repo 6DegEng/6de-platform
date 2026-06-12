@@ -254,6 +254,98 @@ def normalize_row(
 
 
 # ---------------------------------------------------------------------------
+# Financial synthesis — invoices/payments from tracker dollar columns
+# ---------------------------------------------------------------------------
+# The tracker carries three dollar columns per project (Contract Value,
+# Amount Paid, Outstanding Balance) but no invoice-level history. To make
+# the Financials/AR pages real, we synthesize AT MOST two invoice records
+# per project:
+#   <job>-L1  amount = Amount Paid       status 'paid'  (what's been collected)
+#   <job>-L2  amount = Outstanding Bal.  status 'sent'  (what's still owed)
+# The "L" marks them as Legacy-synthesized so they can never collide with
+# real invoices (Invoice YYMMDD-# convention) and are easy to find/delete.
+# The tracker has no payment dates, so issue/paid dates fall back to the
+# project's start_date (closest known date) or today — stated in the
+# invoice notes so nobody mistakes them for bookkeeping records.
+
+_SYNTH_NOTE = (
+    "Synthesized from the legacy tracker dollar columns on import. "
+    "Dates are approximate (project start date). Not a bookkeeping record."
+)
+
+
+def synthesize_invoices(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build 0-2 invoice dicts from a normalized tracker row (pure)."""
+    jn = row.get("job_number")
+    if not jn:
+        return []
+    issue = row.get("start_date") or date.today().isoformat()
+    paid = row.get("amount_paid") or 0.0
+    outstanding = row.get("outstanding_balance") or 0.0
+
+    invoices: list[dict[str, Any]] = []
+    if paid > 0:
+        invoices.append({
+            "invoice_number": f"{jn}-L1",
+            "description": "Legacy import — amount paid to date",
+            "amount": paid,
+            "status": "paid",
+            "issue_date": issue,
+            "paid_date": issue,
+            "paid_amount": paid,
+            "notes": _SYNTH_NOTE,
+        })
+    if outstanding > 0:
+        invoices.append({
+            "invoice_number": f"{jn}-L2",
+            "description": "Legacy import — outstanding balance",
+            "amount": outstanding,
+            "status": "sent",
+            "issue_date": issue,
+            "paid_amount": 0,
+            "notes": _SYNTH_NOTE,
+        })
+    return invoices
+
+
+def client_identity(row: dict[str, Any]) -> tuple[str, str] | None:
+    """Normalized (company, contact) identity for dedupe, or None if absent."""
+    company = (row.get("_client_company") or "").strip()
+    contact = (row.get("_client_contact") or "").strip()
+    if not company and not contact:
+        return None
+    return (company.lower(), contact.lower())
+
+
+def ensure_client(conn, company: str | None, contact: str | None) -> int | None:
+    """Find-or-create a client from tracker Company/Contact columns.
+
+    Matching is case-insensitive on (company, name). The client ``name`` is
+    the contact person when present, else the company string.
+    """
+    company = (company or "").strip()
+    contact = (contact or "").strip()
+    if not company and not contact:
+        return None
+    name = contact or company
+
+    row = conn.execute(
+        "SELECT id FROM clients "
+        "WHERE LOWER(COALESCE(name,'')) = ? AND LOWER(COALESCE(company,'')) = ?",
+        (name.lower(), company.lower()),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    cur = conn.execute(
+        "INSERT INTO clients (name, company, notes) VALUES (?, ?, ?)",
+        (name, company or None, "Created by legacy tracker import."),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+# ---------------------------------------------------------------------------
 # Validator — run the same checks the service layer does
 # ---------------------------------------------------------------------------
 def validate_row(
@@ -341,6 +433,16 @@ def print_summary(report: dict) -> None:
     print(f"  UPDATE-EXISTING: {s['update']}")
     print(f"  SKIP-DUPLICATE:  {s['skip']}")
     print(f"  FAIL-VALIDATION: {s['fail']}")
+    fs = s.get("financial_synthesis")
+    if fs:
+        print("-" * 60)
+        print("  FINANCIAL SYNTHESIS (what --commit would create):")
+        if fs["enabled"]["invoices"]:
+            print(f"    Invoices planned:   {fs['invoices_planned']}")
+            print(f"    Paid total:         ${fs['paid_total']:,.2f}")
+            print(f"    Outstanding total:  ${fs['outstanding_total']:,.2f}")
+        if fs["enabled"]["clients"]:
+            print(f"    Distinct clients:   {fs['distinct_clients']}")
     print("=" * 60)
 
     # Print failures detail
@@ -369,13 +471,23 @@ def write_report(report: dict, path: Path) -> None:
 def commit_rows(
     results: list[dict],
     normalized_rows: list[dict[str, Any]],
-) -> None:
-    """Actually persist CREATE / UPDATE rows to the database."""
+    conn=None,
+    *,
+    synthesize_financials: bool = False,
+    create_clients: bool = False,
+) -> dict[str, int]:
+    """Actually persist CREATE / UPDATE rows to the database.
+
+    Returns counters: {"invoices_created": n, "clients_created": n,
+    "clients_linked": n} (all 0 unless the corresponding flag is on).
+    """
     from db import ensure_db
     from modules.projects.crud import create_project, update_project
     from modules.projects.codes import next_job_code
 
-    conn = ensure_db()
+    if conn is None:
+        conn = ensure_db()
+    counters = {"invoices_created": 0, "clients_created": 0, "clients_linked": 0}
 
     for result, row in zip(results, normalized_rows):
         if result["outcome"] == Outcome.FAIL:
@@ -387,18 +499,58 @@ def commit_rows(
         if result["outcome"] == Outcome.CREATE:
             if not data.get("job_number"):
                 data["job_number"] = next_job_code(conn)
-            create_project(conn, **data)
+            project_id = create_project(conn, **data)
         elif result["outcome"] == Outcome.UPDATE:
             proj = conn.execute(
                 "SELECT id FROM projects WHERE job_number = ?",
                 (data["job_number"],),
             ).fetchone()
-            if proj:
-                data.pop("job_number", None)
-                data.pop("name", None)  # don't overwrite name on update
-                if data:
-                    update_project(conn, proj["id"], **data)
+            if not proj:
+                continue
+            project_id = int(proj["id"])
+            upd = dict(data)
+            upd.pop("job_number", None)
+            upd.pop("name", None)  # don't overwrite name on update
+            if upd:
+                update_project(conn, project_id, **upd)
+        else:
+            continue
 
+        if create_clients:
+            before = conn.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"]
+            client_id = ensure_client(
+                conn, row.get("_client_company"), row.get("_client_contact")
+            )
+            if client_id is not None:
+                after = conn.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"]
+                if after > before:
+                    counters["clients_created"] += 1
+                conn.execute(
+                    "UPDATE projects SET client_id = ? WHERE id = ? AND client_id IS NULL",
+                    (client_id, project_id),
+                )
+                conn.commit()
+                counters["clients_linked"] += 1
+
+        if synthesize_financials:
+            for inv in synthesize_invoices(row):
+                exists = conn.execute(
+                    "SELECT 1 FROM invoices WHERE invoice_number = ?",
+                    (inv["invoice_number"],),
+                ).fetchone()
+                if exists:
+                    continue  # idempotent re-runs: never duplicate
+                cols = ", ".join(inv.keys())
+                marks = ", ".join("?" for _ in inv)
+                conn.execute(
+                    f"INSERT INTO invoices (project_id, {cols}) "
+                    f"VALUES (?, {marks})",
+                    [project_id, *inv.values()],
+                )
+                conn.commit()
+                counters["invoices_created"] += 1
+
+    return counters
     # NOTE: ensure_db() returns a cached, process-wide connection. Closing it
     # here poisons the cache for any later caller in the same process, so we
     # deliberately leave it open (the process exit closes it).
@@ -413,6 +565,8 @@ def run_import(
     map_path: Path | None = None,
     commit: bool = False,
     report_path: Path | None = None,
+    synthesize_financials: bool = False,
+    create_clients: bool = False,
 ) -> dict:
     """Run the import pipeline and return the report dict."""
     col_map = load_column_map(map_path)
@@ -447,6 +601,31 @@ def run_import(
         })
 
     report = build_report(results, str(file_path), sheet_name, commit)
+
+    # Financial-synthesis preview (computed in BOTH modes so the dry-run
+    # report shows Juan exactly what --commit would create).
+    if synthesize_financials or create_clients:
+        ok_rows = [
+            row for result, row in zip(results, normalized)
+            if result["outcome"] in (Outcome.CREATE, Outcome.UPDATE)
+        ]
+        all_invoices = [inv for row in ok_rows for inv in synthesize_invoices(row)]
+        distinct_clients = {
+            ident for row in ok_rows
+            if (ident := client_identity(row)) is not None
+        }
+        report["summary"]["financial_synthesis"] = {
+            "enabled": {"invoices": synthesize_financials, "clients": create_clients},
+            "invoices_planned": len(all_invoices) if synthesize_financials else 0,
+            "paid_total": round(sum(
+                i["amount"] for i in all_invoices if i["status"] == "paid"
+            ), 2) if synthesize_financials else 0,
+            "outstanding_total": round(sum(
+                i["amount"] for i in all_invoices if i["status"] == "sent"
+            ), 2) if synthesize_financials else 0,
+            "distinct_clients": len(distinct_clients) if create_clients else 0,
+        }
+
     print_summary(report)
 
     if report_path:
@@ -456,8 +635,18 @@ def run_import(
         creates = sum(1 for r in results if r["outcome"] == Outcome.CREATE)
         updates = sum(1 for r in results if r["outcome"] == Outcome.UPDATE)
         if creates + updates > 0:
-            commit_rows(results, normalized)
+            counters = commit_rows(
+                results, normalized,
+                synthesize_financials=synthesize_financials,
+                create_clients=create_clients,
+            )
             print(f"\nCommitted {creates} creates + {updates} updates to database.")
+            if synthesize_financials or create_clients:
+                print(
+                    f"Synthesized {counters['invoices_created']} invoices; "
+                    f"created {counters['clients_created']} clients; "
+                    f"linked {counters['clients_linked']} projects to clients."
+                )
         else:
             print("\nNothing to commit.")
     else:
@@ -494,6 +683,17 @@ def main() -> None:
         "--report", type=Path, default=None, dest="report_path",
         help="Write a structured JSON report to this path",
     )
+    parser.add_argument(
+        "--synthesize-financials", action="store_true", default=False,
+        help="Also create per-project invoice records from the tracker's "
+             "Amount Paid / Outstanding Balance columns (-L1/-L2 invoice "
+             "numbers; idempotent; dry-run previews totals first)",
+    )
+    parser.add_argument(
+        "--create-clients", action="store_true", default=False,
+        help="Also find-or-create client records from the Company/Contact "
+             "columns and link them to the imported projects",
+    )
 
     args = parser.parse_args()
 
@@ -507,6 +707,8 @@ def main() -> None:
         map_path=args.map_path,
         commit=args.commit,
         report_path=args.report_path,
+        synthesize_financials=args.synthesize_financials,
+        create_clients=args.create_clients,
     )
 
 
