@@ -1,5 +1,23 @@
 # Azure Postgres cutover runbook — kill the wipe-on-redeploy bug for good
 
+> ## ✅ AS-RUN 2026-06-11 — the cutover is DONE. Production actuals:
+> - The server **already existed** (created 2026-05-23 in the earlier infra
+>   attempt), so Step 1 was skipped. It lives in **East US 2** (not eastus)
+>   and its admin user is **`sixdeadmin`** (not platformadmin). The admin
+>   password was reset during the run; it's in Juan's password manager.
+> - Key Vault `sixde-kv-jc` also pre-existed and uses **RBAC authorization**
+>   — the Step 4 `set-policy` command fails on it; the documented RBAC
+>   fallback (`az role assignment create … "Key Vault Secrets User"`) is the
+>   command that actually ran.
+> - Import result: 68 projects committed; restart-proof passed; temp
+>   firewall rule `juan-home` removed afterwards.
+> - CLI drift fixed below: `az postgres flexible-server create` **no longer
+>   accepts `--database-name`** — the database is created with a separate
+>   `az postgres flexible-server db create` (Step 1 now shows both commands).
+>
+> Keep this runbook for disaster recovery / re-provisioning, with the
+> actuals above taking precedence wherever they differ.
+
 **What this fixes:** the deployed app stores its SQLite database *inside* the
 container, so every redeploy wipes all data (the "everything shows $0 / zero
 projects" bug). This runbook moves the data to a managed Postgres server that
@@ -66,9 +84,15 @@ az postgres flexible-server create \
   --version 16 \
   --admin-user platformadmin \
   --admin-password "$PGPASS" \
-  --database-name platform \
   --public-access None \
   --yes
+
+# The az CLI removed --database-name from `flexible-server create`
+# (verified live 2026-06-11) — create the database as a second step:
+az postgres flexible-server db create \
+  --server-name sixde-platform-db-jc \
+  --resource-group 6de-platform-rg \
+  --database-name platform
 ```
 
 ✅ Verify:
