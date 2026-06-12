@@ -110,12 +110,17 @@ DENSITY_OPTIONS: dict[str, int] = {
 # JsCode cell renderers that paint the cell with the pill palette.
 # Drawn entirely client-side; no HTML round-trip on every edit.
 #
-# IMPORTANT: AG Grid v32+ (bundled v34 in streamlit-aggrid 1.2.x) assigns a
-# cellRenderer function's *string* return value via ``element.textContent`` —
-# so returning raw HTML markup shows up as literal escaped text in the cell
-# (e.g. ``<span style="...">``). To render HTML we MUST return a DOM element
-# and set ``innerHTML`` on it ourselves. Each renderer below therefore builds
-# a ``<span>``/``<div>`` element and returns the element, not a string.
+# IMPORTANT: in streamlit-aggrid 1.2.x (AG Grid React v34) a *plain function*
+# cellRenderer is mounted as a React component — so returning a DOM element
+# makes React throw "Minified React error #31: Objects are not valid as a
+# React child (found: [object HTMLSpanElement])", which crashes the whole
+# grid behind a "Component Error" banner once enough cells render (the
+# 68-row production import made it constant). And returning an HTML *string*
+# from a function renderer is assigned via ``element.textContent``, which
+# shows the markup as literal escaped text. The only shape that renders HTML
+# safely is an AG Grid *JS component class* (init/getGui/refresh) — AG Grid
+# instantiates it outside React entirely. Each renderer below is therefore a
+# class expression, not a function.
 # ---------------------------------------------------------------------------
 def _build_status_renderer() -> JsCode:
     color_map_js = "{" + ", ".join(
@@ -127,19 +132,22 @@ def _build_status_renderer() -> JsCode:
     dark_text_js = "['completed', 'prospect']"
     return JsCode(
         f"""
-        function(params) {{
-            const colors = {color_map_js};
-            const labels = {label_map_js};
-            const darkText = {dark_text_js};
-            const value = params.value || '';
-            const bg = colors[value] || '#C6BCAE';
-            const fg = darkText.includes(value) ? '#111827' : '#ffffff';
-            const label = labels[value] || value;
-            const el = document.createElement('span');
-            el.innerHTML = `<span style="background:${{bg}};color:${{fg}};` +
-                   `padding:2px 10px;border-radius:10px;font-size:0.85em;` +
-                   `font-weight:600;">${{label}}</span>`;
-            return el;
+        class {{
+            init(params) {{
+                const colors = {color_map_js};
+                const labels = {label_map_js};
+                const darkText = {dark_text_js};
+                const value = params.value || '';
+                const bg = colors[value] || '#C6BCAE';
+                const fg = darkText.includes(value) ? '#111827' : '#ffffff';
+                const label = labels[value] || value;
+                this.eGui = document.createElement('span');
+                this.eGui.innerHTML = `<span style="background:${{bg}};color:${{fg}};` +
+                       `padding:2px 10px;border-radius:10px;font-size:0.85em;` +
+                       `font-weight:600;">${{label}}</span>`;
+            }}
+            getGui() {{ return this.eGui; }}
+            refresh() {{ return false; }}
         }}
         """
     )
@@ -154,17 +162,20 @@ def _build_priority_renderer() -> JsCode:
     ) + "}"
     return JsCode(
         f"""
-        function(params) {{
-            const colors = {color_map_js};
-            const labels = {label_map_js};
-            const value = params.value || '';
-            if (!value) return '';
-            const color = colors[value] || '#C6BCAE';
-            const label = labels[value] || value;
-            const el = document.createElement('span');
-            el.innerHTML = `<span style="color:${{color}};font-weight:600;` +
-                   `font-size:0.85em;">● ${{label}}</span>`;
-            return el;
+        class {{
+            init(params) {{
+                this.eGui = document.createElement('span');
+                const value = params.value || '';
+                if (!value) return;
+                const colors = {color_map_js};
+                const labels = {label_map_js};
+                const color = colors[value] || '#C6BCAE';
+                const label = labels[value] || value;
+                this.eGui.innerHTML = `<span style="color:${{color}};font-weight:600;` +
+                       `font-size:0.85em;">● ${{label}}</span>`;
+            }}
+            getGui() {{ return this.eGui; }}
+            refresh() {{ return false; }}
         }}
         """
     )
@@ -173,18 +184,21 @@ def _build_priority_renderer() -> JsCode:
 def _build_percent_renderer() -> JsCode:
     return JsCode(
         """
-        function(params) {
-            const val = params.value;
-            if (val === null || val === undefined || val === '') return '';
-            const pct = Math.round(Number(val));
-            const width = Math.min(100, Math.max(0, pct));
-            const color = pct >= 100 ? '#62C384' : pct >= 50 ? '#8FB8F2' : '#E5A54E';
-            const el = document.createElement('div');
-            el.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">` +
-                   `<div style="flex:1;background:#3a3128;border-radius:4px;height:8px;">` +
-                   `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
-                   `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
-            return el;
+        class {
+            init(params) {
+                this.eGui = document.createElement('div');
+                const val = params.value;
+                if (val === null || val === undefined || val === '') return;
+                const pct = Math.round(Number(val));
+                const width = Math.min(100, Math.max(0, pct));
+                const color = pct >= 100 ? '#62C384' : pct >= 50 ? '#8FB8F2' : '#E5A54E';
+                this.eGui.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">` +
+                       `<div style="flex:1;background:#3a3128;border-radius:4px;height:8px;">` +
+                       `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
+                       `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
+            }
+            getGui() { return this.eGui; }
+            refresh() { return false; }
         }
         """
     )
@@ -366,18 +380,21 @@ def _build_bucket_renderer() -> JsCode:
     ) + "}"
     return JsCode(
         f"""
-        function(params) {{
-            const colors = {color_map_js};
-            const labels = {label_map_js};
-            const value = params.value || '';
-            if (!value) return '';
-            const bg = colors[value] || '#C6BCAE';
-            const label = labels[value] || value;
-            const el = document.createElement('span');
-            el.innerHTML = `<span style="background:${{bg}};color:#fff;` +
-                   `padding:2px 8px;border-radius:8px;font-size:0.8em;` +
-                   `font-weight:500;">${{label}}</span>`;
-            return el;
+        class {{
+            init(params) {{
+                this.eGui = document.createElement('span');
+                const value = params.value || '';
+                if (!value) return;
+                const colors = {color_map_js};
+                const labels = {label_map_js};
+                const bg = colors[value] || '#C6BCAE';
+                const label = labels[value] || value;
+                this.eGui.innerHTML = `<span style="background:${{bg}};color:#fff;` +
+                       `padding:2px 8px;border-radius:8px;font-size:0.8em;` +
+                       `font-weight:500;">${{label}}</span>`;
+            }}
+            getGui() {{ return this.eGui; }}
+            refresh() {{ return false; }}
         }}
         """
     )
@@ -427,18 +444,19 @@ def _build_grid_options(
         cellEditorParams={"values": list(PROJECT_STATUSES)},
         cellRenderer=_build_status_renderer(),
         width=140,
-        enableRowGroup=True,
     )
 
+    # True row-grouping is an AG Grid Enterprise module (we ship community
+    # only — enable_enterprise_modules=False), so "group by bucket" surfaces
+    # the bucket column pinned + pre-sorted instead of a real group tree.
     gb.configure_column(
         "lifecycle_bucket",
         header_name=COLUMN_HEADERS["lifecycle_bucket"],
         editable=False,
         cellRenderer=_build_bucket_renderer(),
         width=120,
-        enableRowGroup=True,
-        rowGroup=group_by_bucket,
         hide=not group_by_bucket,
+        sort="asc" if group_by_bucket else None,
     )
 
     gb.configure_column(
@@ -527,18 +545,21 @@ def _build_grid_options(
     selection_mode = "multiple" if multi_select else "single"
     gb.configure_selection(selection_mode=selection_mode, use_checkbox=False)
 
-    gb.configure_side_bar()
+    # NOTE: configure_side_bar() / rowGroupPanelShow / enableRowGroup are
+    # Enterprise-module features; with community modules they only log
+    # AG Grid error #200 in the console and do nothing — removed on purpose.
 
     grid_options = gb.build()
 
     grid_options["suppressClipboardPaste"] = False
     grid_options["suppressRowClickSelection"] = False
-    grid_options["rowGroupPanelShow"] = "always"
-    grid_options["groupDisplayType"] = "groupRows"
     grid_options["animateRows"] = True
     grid_options["rowHeight"] = row_height
     grid_options["enableCellTextSelection"] = True
     grid_options["accentedSort"] = True
+    # Stable row identity for edit/selection round-trips (also silences the
+    # "getRowId was not set" warning).
+    grid_options["getRowId"] = JsCode("function(params) { return String(params.data.id); }")
 
     return grid_options
 
