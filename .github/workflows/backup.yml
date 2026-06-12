@@ -1,0 +1,120 @@
+name: Nightly Postgres backup to Blob
+
+# Dumps the production Postgres (sixde-platform-db-jc / platform) every night
+# and uploads it to Azure Blob Storage. The platform DB is the SOLE copy of
+# production data — Azure's built-in PITR (7 days) is the first line of
+# defense; these dumps are the independent, restorable second line.
+#
+# ⛔ INERT UNTIL ENABLED: the job refuses to run unless the repo variable
+# BACKUP_ENABLED is "true" AND the one-time gated setup exists (storage
+# account + 2 role assignments) — see docs/backup-setup.md. Merging this
+# file changes nothing in production.
+#
+# AUTH: same GitHub-OIDC federated identity the deploy workflow uses (no
+# stored credentials). The scheduled run executes on main, which matches the
+# federated credential subject.
+
+on:
+  schedule:
+    - cron: "17 7 * * *"   # 07:17 UTC ≈ 2:17am ET (3:17am EDT) nightly
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: pg-backup
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: 6de-platform-rg
+  PG_SERVER: sixde-platform-db-jc
+  PG_DB: platform
+  KEYVAULT: sixde-kv-jc
+  KV_SECRET: platform-database-url
+  STORAGE_ACCOUNT: sixdebackupjc
+  CONTAINER: pg-backups
+
+jobs:
+  backup:
+    # Gate: repo variable BACKUP_ENABLED must be exactly "true".
+    if: ${{ vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Azure login (OIDC — no stored secret)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read DB connection string from Key Vault (masked)
+        run: |
+          url=$(az keyvault secret show --vault-name "$KEYVAULT" \
+                  --name "$KV_SECRET" --query value -o tsv)
+          echo "::add-mask::$url"
+          # Split into libpq pieces so the password never appears in argv.
+          # URL shape: postgresql://USER:PASS@HOST:5432/DB?sslmode=require
+          creds="${url#postgresql://}"; creds="${creds%%@*}"
+          hostpart="${url#*@}"; hostpart="${hostpart%%/*}"
+          PGUSER="${creds%%:*}"
+          PGPASSWORD="${creds#*:}"
+          # URL-decode the password (it was URL-encoded defensively at setup).
+          PGPASSWORD=$(python3 -c "import sys,urllib.parse;print(urllib.parse.unquote(sys.argv[1]))" "$PGPASSWORD")
+          echo "::add-mask::$PGPASSWORD"
+          {
+            echo "PGUSER=$PGUSER"
+            echo "PGPASSWORD=$PGPASSWORD"
+            echo "PGHOST=${hostpart%%:*}"
+            echo "PGPORT=5432"
+            echo "PGSSLMODE=require"
+          } >> "$GITHUB_ENV"
+
+      - name: Open a firewall hole for this runner (removed in cleanup)
+        run: |
+          ip=$(curl -s https://api.ipify.org)
+          az postgres flexible-server firewall-rule create \
+            --name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
+            --rule-name gh-backup-runner \
+            --start-ip-address "$ip" --end-ip-address "$ip" -o none
+
+      - name: pg_dump (custom format) + integrity check
+        run: |
+          stamp=$(date -u +%Y-%m-%d_%H%M)
+          file="platform_${stamp}.dump"
+          pg_dump --dbname="$PG_DB" -Fc --no-owner --file "$file"
+          # A dump that pg_restore can't list is not a backup.
+          pg_restore --list "$file" > /dev/null
+          size=$(stat -c%s "$file")
+          echo "Dump $file is $size bytes"
+          # 68 projects + schema should never be near-empty; fail loudly.
+          test "$size" -gt 20000
+          echo "DUMP_FILE=$file" >> "$GITHUB_ENV"
+
+      - name: Upload to Blob Storage
+        run: |
+          az storage blob upload \
+            --auth-mode login \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$CONTAINER" \
+            --name "$DUMP_FILE" \
+            --file "$DUMP_FILE" -o none
+          echo "Uploaded $DUMP_FILE"
+
+      - name: Verify the blob landed
+        run: |
+          az storage blob show \
+            --auth-mode login \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$CONTAINER" \
+            --name "$DUMP_FILE" \
+            --query "{name:name, size:properties.contentLength}" -o table
+
+      - name: Close the firewall hole (always)
+        if: always()
+        run: |
+          az postgres flexible-server firewall-rule delete \
+            --name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
+            --rule-name gh-backup-runner --yes -o none || true
