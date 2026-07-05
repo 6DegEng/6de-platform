@@ -5,6 +5,15 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
+from modules.status_colors import WORKING_STATUSES
+
+# SQL fragment + params for "project is in a working stage" (the ACTIVE
+# lifecycle bucket: active/drafting/ahj_permitting/inspection/revisions).
+# Definition ratified by Juan 2026-06-12 — the old status = 'active' filter
+# showed "Active Projects: 1" against 41 genuinely working projects after
+# the real-tracker import.
+_WORKING_SQL = "status IN ({})".format(", ".join("?" for _ in WORKING_STATUSES))
+
 
 def _today() -> str:
     return date.today().isoformat()
@@ -39,8 +48,9 @@ def get_dashboard_data(conn: sqlite3.Connection) -> dict:
     # ------------------------------------------------------------------
     row = conn.execute(
         "SELECT COUNT(*) AS total,"
-        "       SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active "
-        "FROM projects"
+        f"       SUM(CASE WHEN {_WORKING_SQL} THEN 1 ELSE 0 END) AS active "
+        "FROM projects",
+        WORKING_STATUSES,
     ).fetchone()
     data["total_projects"] = row["total"] or 0
     data["active_projects"] = row["active"] or 0
@@ -49,8 +59,8 @@ def get_dashboard_data(conn: sqlite3.Connection) -> dict:
     # bulk-import time and inflates the count). B8 fix.
     row = conn.execute(
         "SELECT COUNT(*) AS cnt FROM projects "
-        "WHERE start_date >= ? AND status = 'active'",
-        (month_start,),
+        f"WHERE start_date >= ? AND {_WORKING_SQL}",
+        (month_start, *WORKING_STATUSES),
     ).fetchone()
     data["new_projects_this_month"] = row["cnt"] or 0
 
@@ -228,10 +238,11 @@ def get_dashboard_data(conn: sqlite3.Connection) -> dict:
     ).fetchone()
     data["recurring_monthly_burn"] = row["burn"]
 
-    # Total outstanding from project contract values
+    # Total outstanding from project contract values across working stages
     row = conn.execute(
         "SELECT COALESCE(SUM(outstanding_balance), 0) AS outstanding "
-        "FROM projects WHERE status = 'active'"
+        f"FROM projects WHERE {_WORKING_SQL}",
+        WORKING_STATUSES,
     ).fetchone()
     data["project_outstanding"] = row["outstanding"]
 

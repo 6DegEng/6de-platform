@@ -121,7 +121,13 @@ with c1:
     active_n = int(data.get("active_projects") or 0)
     new_n = int(data.get("new_projects_this_month") or 0)
     delta = f"+{new_n} this month" if new_n else None
-    st.metric("Active Projects", str(active_n), delta=delta)
+    st.metric(
+        "Active Projects",
+        str(active_n),
+        delta=delta,
+        help="Projects in a working stage: Active, Drafting, AHJ/Permitting, "
+             "Inspection, or Revisions.",
+    )
 
 with c2:
     outstanding_display = max(
@@ -190,7 +196,10 @@ with c11:
     total_projects = data.get("total_projects", 0)
     active_projects = data.get("active_projects", 0)
     pct = (active_projects / total_projects * 100) if total_projects else 0
-    st.metric("Active Rate", f"{pct:.0f}%")
+    st.metric("Working Rate", f"{pct:.0f}%",
+              help="Share of all projects in a working stage: Active, Drafting, "
+                   "AHJ/Permitting, Inspection, or Revisions. "
+                   "See docs/data_definitions.md §6.")
 with c12:
     bid_count = len(data.get("upcoming_bid_deadlines", []))
     st.metric("Bid Deadlines", f"{bid_count} upcoming")
