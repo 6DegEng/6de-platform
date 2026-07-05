@@ -76,8 +76,8 @@ jobs:
         run: |
           ip=$(curl -s https://api.ipify.org)
           az postgres flexible-server firewall-rule create \
-            --name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
-            --rule-name gh-backup-runner \
+            --server-name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
+            --name gh-backup-runner \
             --start-ip-address "$ip" --end-ip-address "$ip" -o none
 
       - name: pg_dump (custom format) + integrity check
@@ -116,5 +116,5 @@ jobs:
         if: always()
         run: |
           az postgres flexible-server firewall-rule delete \
-            --name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
-            --rule-name gh-backup-runner --yes -o none || true
+            --server-name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
+            --name gh-backup-runner --yes -o none || true
