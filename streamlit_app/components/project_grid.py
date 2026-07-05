@@ -142,9 +142,15 @@ def _build_status_renderer() -> JsCode:
                 const fg = darkText.includes(value) ? '#111827' : '#ffffff';
                 const label = labels[value] || value;
                 this.eGui = document.createElement('span');
-                this.eGui.innerHTML = `<span style="background:${{bg}};color:${{fg}};` +
+                const pill = document.createElement('span');
+                pill.style.cssText = `background:${{bg}};color:${{fg}};` +
                        `padding:2px 10px;border-radius:10px;font-size:0.85em;` +
-                       `font-weight:600;">${{label}}</span>`;
+                       `font-weight:600;`;
+                // textContent (not innerHTML) so a hostile status value can
+                // never inject markup — colors/labels come from trusted
+                // Python-side maps, only the label text is data-driven.
+                pill.textContent = label;
+                this.eGui.appendChild(pill);
             }}
             getGui() {{ return this.eGui; }}
             refresh() {{ return false; }}
@@ -171,8 +177,12 @@ def _build_priority_renderer() -> JsCode:
                 const labels = {label_map_js};
                 const color = colors[value] || '#C6BCAE';
                 const label = labels[value] || value;
-                this.eGui.innerHTML = `<span style="color:${{color}};font-weight:600;` +
-                       `font-size:0.85em;">● ${{label}}</span>`;
+                const dot = document.createElement('span');
+                dot.style.cssText = `color:${{color}};font-weight:600;` +
+                       `font-size:0.85em;`;
+                // textContent so an unexpected priority value cannot inject HTML.
+                dot.textContent = `● ${{label}}`;
+                this.eGui.appendChild(dot);
             }}
             getGui() {{ return this.eGui; }}
             refresh() {{ return false; }}
@@ -389,9 +399,13 @@ def _build_bucket_renderer() -> JsCode:
                 const labels = {label_map_js};
                 const bg = colors[value] || '#C6BCAE';
                 const label = labels[value] || value;
-                this.eGui.innerHTML = `<span style="background:${{bg}};color:#fff;` +
+                const pill = document.createElement('span');
+                pill.style.cssText = `background:${{bg}};color:#fff;` +
                        `padding:2px 8px;border-radius:8px;font-size:0.8em;` +
-                       `font-weight:500;">${{label}}</span>`;
+                       `font-weight:500;`;
+                // textContent so an unexpected bucket value cannot inject HTML.
+                pill.textContent = label;
+                this.eGui.appendChild(pill);
             }}
             getGui() {{ return this.eGui; }}
             refresh() {{ return false; }}
@@ -448,7 +462,7 @@ def _build_grid_options(
 
     # True row-grouping is an AG Grid Enterprise module (we ship community
     # only — enable_enterprise_modules=False), so "group by bucket" surfaces
-    # the bucket column pinned + pre-sorted instead of a real group tree.
+    # the bucket column unhidden + pre-sorted instead of a real group tree.
     gb.configure_column(
         "lifecycle_bucket",
         header_name=COLUMN_HEADERS["lifecycle_bucket"],
