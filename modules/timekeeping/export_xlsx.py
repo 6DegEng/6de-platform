@@ -153,7 +153,6 @@ def build_timesheet_workbook(
     b2 = ws.cell(row=2, column=2, value=datetime.combine(monday, datetime.min.time()))
     b2.number_format = "mm/dd/yyyy"
     ws.cell(row=4, column=1, value="Hours & Revenue by Role")
-    ws.append([])  # spacer safety not needed; we place explicitly below
     ws.cell(row=5, column=1, value="Role")
     ws.cell(row=5, column=2, value="Hours")
     ws.cell(row=5, column=3, value="Revenue ($)")

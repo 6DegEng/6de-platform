@@ -118,17 +118,6 @@ def match_employee(folder_name: str, employees: list) -> Any | None:
     return None
 
 
-def find_time_log_header_row(ws) -> int | None:
-    """Locate the Time_Log header row (expected row 5; scan 1-10 to be safe)."""
-    for r in range(1, 11):
-        a = ws.cell(row=r, column=1).value
-        b = ws.cell(row=r, column=2).value
-        if isinstance(a, str) and a.strip() == "Date" \
-                and isinstance(b, str) and b.strip() == "Project #":
-            return r
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Per-file parser
 # ---------------------------------------------------------------------------
