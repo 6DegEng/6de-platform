@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date, timedelta
 
+from modules.crm.stages import open_stage_keys as crm_open_stage_keys
 from modules.status_colors import WORKING_STATUSES
 
 # SQL fragment + params for "project is in a working stage" (the ACTIVE
@@ -188,11 +189,17 @@ def get_dashboard_data(conn: sqlite3.Connection) -> dict:
     # ------------------------------------------------------------------
     # ERP extensions: pipeline, utilization, unbilled, bids
     # ------------------------------------------------------------------
-    row = conn.execute(
-        "SELECT COALESCE(SUM(estimated_value * probability / 100.0), 0) AS weighted "
-        "FROM opportunities WHERE stage NOT IN ('lost', 'dormant', 'won')"
-    ).fetchone()
-    data["pipeline_weighted"] = row["weighted"]
+    open_keys = crm_open_stage_keys(conn)
+    if open_keys:
+        stage_ph = ", ".join("?" for _ in open_keys)
+        row = conn.execute(
+            "SELECT COALESCE(SUM(estimated_value * probability / 100.0), 0) AS weighted "
+            f"FROM opportunities WHERE stage IN ({stage_ph})",  # noqa: S608
+            open_keys,
+        ).fetchone()
+        data["pipeline_weighted"] = row["weighted"]
+    else:
+        data["pipeline_weighted"] = 0.0
 
     row = conn.execute(
         "SELECT COALESCE(SUM(hours * rate * multiplier), 0) AS unbilled "

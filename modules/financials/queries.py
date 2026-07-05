@@ -14,10 +14,29 @@ import sqlite3
 from datetime import date
 from typing import Any
 
+from modules.crm.stages import open_stage_keys as crm_open_stage_keys
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _weighted_open_pipeline(conn: sqlite3.Connection) -> float:
+    """Sum of estimated_value x probability across the open pipeline.
+
+    Open stages come from the crm_stages config table (falls back to the
+    seeded defaults), so this tile stays consistent with the CRM page.
+    """
+    open_keys = crm_open_stage_keys(conn)
+    if not open_keys:
+        return 0.0
+    stage_ph = ", ".join("?" for _ in open_keys)
+    row = conn.execute(
+        "SELECT COALESCE(SUM(estimated_value * probability / 100.0), 0) AS val "
+        f"FROM opportunities WHERE stage IN ({stage_ph})",  # noqa: S608
+        open_keys,
+    ).fetchone()
+    return round(row["val"], 2)
 
 def _year_start(year: int | None = None) -> str:
     """ISO date for January 1 of the given (or current) year."""
@@ -164,12 +183,7 @@ def get_revenue_forecast(conn: sqlite3.Connection) -> dict:
     Returns dict with those three components plus a total.
     """
     # Weighted pipeline
-    row = conn.execute(
-        "SELECT COALESCE(SUM(estimated_value * probability / 100.0), 0) AS val "
-        "FROM opportunities "
-        "WHERE stage NOT IN ('lost', 'dormant', 'won')"
-    ).fetchone()
-    pipeline_weighted = round(row["val"], 2)
+    pipeline_weighted = _weighted_open_pipeline(conn)
 
     # Pending payment schedules
     row = conn.execute(
@@ -253,12 +267,7 @@ def get_financial_summary(conn: sqlite3.Connection) -> dict:
     unbilled_expenses = round(row["val"], 2)
 
     # Pipeline weighted
-    row = conn.execute(
-        "SELECT COALESCE(SUM(estimated_value * probability / 100.0), 0) AS val "
-        "FROM opportunities "
-        "WHERE stage NOT IN ('lost', 'dormant', 'won')"
-    ).fetchone()
-    pipeline_weighted = round(row["val"], 2)
+    pipeline_weighted = _weighted_open_pipeline(conn)
 
     return {
         "revenue_ytd": revenue_ytd,

@@ -32,6 +32,11 @@ from config import (
 )
 from modules.accounting.categorization import seed_rules_from_vba
 from modules.calculator.required_checks import seed_required_checks
+from modules.crm.stages import (
+    seed_crm_stages,
+    seed_lost_reasons,
+    stage_probability,
+)
 
 # ---------------------------------------------------------------------------
 # Schema deltas applied at startup. Each entry: (table, column, column_type).
@@ -61,6 +66,10 @@ _ALTER_COLUMNS = [
     ("transactions", "needs_review", "INTEGER DEFAULT 0"),
     ("transactions", "sync_run_id", "INTEGER"),
     ("opportunities", "source_proposal_id", "INTEGER"),
+    # crm-polish phase 2 — lost reasons + proposal-status sync bookkeeping
+    ("opportunities", "lost_reason_id", "INTEGER"),
+    ("opportunities", "lost_note", "TEXT"),
+    ("opportunities", "source_proposal_status", "TEXT"),
     # Phase 2 — SharePoint document layer
     ("documents", "sharepoint_item_id", "TEXT"),
     ("documents", "sharepoint_web_url", "TEXT"),
@@ -416,10 +425,22 @@ def seed_juan_as_employee(conn: sqlite3.Connection) -> None:
     )
 
 
-def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> int:
-    """For every proposal without a linked opportunity, create one. Idempotent.
-    Closes B5/B11/I3 via the bridge approach. See PLATFORM_GOAL_v1.md Phase 5
-    for the eventual schema collapse."""
+def _bridge_probability(conn: sqlite3.Connection, stage: str, prop_status: str) -> int:
+    """Stage-config probability, falling back to the legacy status map."""
+    prob = stage_probability(conn, stage)
+    if prob is None:
+        prob = _PROPOSAL_PROBABILITY_MAP.get(prop_status, 50)
+    return prob
+
+
+def _bridge_create_missing(conn: sqlite3.Connection) -> int:
+    """Create an opportunity for proposals that don't have one yet.
+
+    Deduped per project: if a project already has a bridge-created
+    opportunity, later proposals for the same project (revisions) do NOT
+    spawn duplicates. Among a project's not-yet-bridged proposals only the
+    newest one is bridged.
+    """
     rows = conn.execute(
         """
         SELECT
@@ -434,12 +455,24 @@ def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> int:
             pr.name           AS project_name,
             pr.client_id      AS client_id,
             pr.service_line   AS project_service_line,
-            cl.service_type   AS client_service_type
+            cl.service_type   AS client_service_type,
+            cl.name           AS client_name,
+            cl.email          AS client_email,
+            cl.phone          AS client_phone
         FROM proposals p
         LEFT JOIN projects pr ON pr.id = p.project_id
         LEFT JOIN clients  cl ON cl.id = pr.client_id
         WHERE NOT EXISTS (
             SELECT 1 FROM opportunities o WHERE o.source_proposal_id = p.id
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM opportunities o2
+            WHERE o2.project_id = p.project_id
+              AND o2.source_proposal_id IS NOT NULL
+        )
+        AND p.id = (
+            SELECT MAX(p2.id) FROM proposals p2
+            WHERE p2.project_id = p.project_id
         )
         """
     ).fetchall()
@@ -448,7 +481,7 @@ def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> int:
     for r in rows:
         prop_status = (r["status"] or "draft").lower()
         stage = _PROPOSAL_STAGE_MAP.get(prop_status, "lead")
-        probability = _PROPOSAL_PROBABILITY_MAP.get(prop_status, 50)
+        probability = _bridge_probability(conn, stage, prop_status)
         service_line = r["project_service_line"] or r["client_service_type"] or "other"
         if service_line not in (
             "structural", "civil", "sirs", "forensics", "pools",
@@ -462,8 +495,10 @@ def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> int:
                 client_id, project_id, name, service_line,
                 stage, estimated_value, probability,
                 source, close_date, notes,
-                source_proposal_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                contact_name, contact_email, contact_phone,
+                source_proposal_id, source_proposal_status,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 r["client_id"],
@@ -477,7 +512,11 @@ def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> int:
                 r["sent_date"],
                 f"Auto-bridged from proposal {r['proposal_number']} "
                 f"({prop_status}). See B5/I3 fix.",
+                r["client_name"],
+                r["client_email"],
+                r["client_phone"],
                 r["proposal_id"],
+                prop_status,
                 r["created_at"] or _now_iso(),
                 _now_iso(),
             ),
@@ -497,6 +536,96 @@ def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> int:
     return created
 
 
+def _bridge_sync_status(conn: sqlite3.Connection) -> int:
+    """Propagate proposal status changes to their bridged opportunities.
+
+    Rules:
+    - Only opportunities the user has NOT moved manually are re-staged: the
+      opportunity must still sit in the stage its last-synced proposal
+      status mapped to. Manually-moved opportunities only get their
+      bookkeeping column refreshed — the user's stage wins.
+    - Rows bridged before the source_proposal_status column existed get a
+      baseline recorded on first pass without touching their stage.
+    """
+    rows = conn.execute(
+        """
+        SELECT o.id      AS opp_id,
+               o.stage   AS opp_stage,
+               o.source_proposal_status AS last_status,
+               p.id      AS proposal_id,
+               p.status  AS prop_status
+        FROM opportunities o
+        JOIN proposals p ON p.id = o.source_proposal_id
+        WHERE o.source_proposal_status IS NULL
+           OR o.source_proposal_status != p.status
+        """
+    ).fetchall()
+
+    synced = 0
+    now = _now_iso()
+    for r in rows:
+        prop_status = (r["prop_status"] or "draft").lower()
+
+        if r["last_status"] is None:
+            # Legacy bridged row — record the baseline, leave the stage alone.
+            conn.execute(
+                "UPDATE opportunities SET source_proposal_status = ? WHERE id = ?",
+                (prop_status, r["opp_id"]),
+            )
+            continue
+
+        expected_stage = _PROPOSAL_STAGE_MAP.get(r["last_status"], "lead")
+        new_stage = _PROPOSAL_STAGE_MAP.get(prop_status, "lead")
+
+        if r["opp_stage"] == expected_stage and new_stage != r["opp_stage"]:
+            probability = _bridge_probability(conn, new_stage, prop_status)
+            conn.execute(
+                "UPDATE opportunities "
+                "SET stage = ?, probability = ?, source_proposal_status = ?, "
+                "    updated_at = ? "
+                "WHERE id = ?",
+                (new_stage, probability, prop_status, now, r["opp_id"]),
+            )
+            log_activity(
+                conn,
+                entity_type="opportunity",
+                entity_id=r["opp_id"],
+                action="stage_change",
+                details={
+                    "old_stage": r["opp_stage"],
+                    "new_stage": new_stage,
+                    "source": "proposal_status_sync",
+                    "proposal_id": r["proposal_id"],
+                },
+            )
+            synced += 1
+        else:
+            # User moved the opportunity manually — just refresh bookkeeping.
+            conn.execute(
+                "UPDATE opportunities SET source_proposal_status = ? WHERE id = ?",
+                (prop_status, r["opp_id"]),
+            )
+    return synced
+
+
+def bridge_proposals_to_opportunities(conn: sqlite3.Connection) -> dict:
+    """Keep proposals and opportunities in sync. Idempotent.
+
+    1. Every project with proposals but no bridged opportunity gets one
+       (newest proposal per project wins — proposal revisions do not spawn
+       duplicates).
+    2. Proposal status changes flow through to bridged opportunities unless
+       the user already moved them manually.
+
+    Returns ``{"created": n, "synced": m}``. Closes B5/B11/I3 via the bridge
+    approach. See PLATFORM_GOAL_v1.md Phase 5 for the eventual schema
+    collapse.
+    """
+    created = _bridge_create_missing(conn)
+    synced = _bridge_sync_status(conn)
+    return {"created": created, "synced": synced}
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -509,6 +638,8 @@ def init_db(db_path: Path | str | None = None) -> None:
     seed_rules_from_vba(conn)
     seed_required_checks(conn)
     seed_juan_as_employee(conn)
+    seed_crm_stages(conn)
+    seed_lost_reasons(conn)
     bridge_proposals_to_opportunities(conn)
     conn.close()
 
@@ -533,6 +664,8 @@ def _ensure_db_impl() -> sqlite3.Connection:
 
     # Seeds are self-idempotent — cheap to call every time.
     seed_juan_as_employee(conn)
+    seed_crm_stages(conn)
+    seed_lost_reasons(conn)
     bridge_proposals_to_opportunities(conn)
     return conn
 

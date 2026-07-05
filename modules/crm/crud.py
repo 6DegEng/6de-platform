@@ -13,18 +13,23 @@ from datetime import date, datetime
 from typing import Any
 
 from modules.activity_utils import sanitize_details
+from modules.crm import stages as stage_config
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
+# Since crm-polish phase 2 the pipeline stages live in the crm_stages config
+# table (see modules/crm/stages.py). The tuples below are the seeded defaults
+# and the fallback for databases where the config table is empty/missing.
 STAGES = ("lead", "qualifying", "proposal_sent", "negotiating", "won", "lost", "dormant")
 
 # "Active" = open pipeline stages only. Excludes the three terminal/closed
 # stages (won = closed-won, lost = closed-lost, dormant = parked/inactive).
-# This is the single source of truth for what the "Active Opportunities" KPI
-# counts, so the KPI and any "active" list header agree by definition.
+# At runtime the open set is read from crm_stages (active AND NOT is_closed);
+# with the default seed it equals this tuple, so the KPI and any "active"
+# list header agree by definition.
 ACTIVE_STAGES = ("lead", "qualifying", "proposal_sent", "negotiating")
 CLOSED_STAGES = ("won", "lost", "dormant")
 
@@ -53,6 +58,7 @@ _OPP_ALLOWED_COLS = {
     "client_id", "project_id", "name", "service_line", "stage",
     "estimated_value", "probability", "source", "close_date",
     "contact_name", "contact_email", "contact_phone", "notes",
+    "lost_reason_id", "lost_note",
 }
 
 _CLIENT_ALLOWED_COLS = {
@@ -97,9 +103,15 @@ def list_opportunities(
     service_line: str | None = None,
     client_id: int | None = None,
 ) -> list[sqlite3.Row]:
-    """Return opportunities with optional filters, LEFT JOIN clients for client_name."""
+    """Return opportunities with optional filters, LEFT JOIN clients for client_name.
+
+    Each row carries ``expected_revenue`` = estimated_value x probability/100
+    (the prorated value that pipeline forecasts sum up).
+    """
     sql = (
-        "SELECT o.*, c.name AS client_name "
+        "SELECT o.*, c.name AS client_name, "
+        "       COALESCE(o.estimated_value, 0) * COALESCE(o.probability, 0) / 100.0 "
+        "           AS expected_revenue "
         "FROM opportunities o "
         "LEFT JOIN clients c ON o.client_id = c.id "
         "WHERE 1=1"
@@ -121,7 +133,9 @@ def list_opportunities(
 def get_opportunity(conn: sqlite3.Connection, opp_id: int) -> sqlite3.Row | None:
     """Fetch a single opportunity by ID, or None if not found."""
     return conn.execute(
-        "SELECT o.*, c.name AS client_name "
+        "SELECT o.*, c.name AS client_name, "
+        "       COALESCE(o.estimated_value, 0) * COALESCE(o.probability, 0) / 100.0 "
+        "           AS expected_revenue "
         "FROM opportunities o "
         "LEFT JOIN clients c ON o.client_id = c.id "
         "WHERE o.id = ?",
@@ -165,8 +179,45 @@ def update_opportunity(conn: sqlite3.Connection, opp_id: int, **kwargs: Any) -> 
     conn.commit()
 
 
-def advance_stage(conn: sqlite3.Connection, opp_id: int, new_stage: str) -> None:
+def allowed_next_stages(conn: sqlite3.Connection, current_stage: str) -> list[str]:
+    """Stage keys an opportunity in *current_stage* may move to.
+
+    Built-in stages keep the original forward-transition rules. Custom
+    (user-added) stages are freely reachable from any stage and can move
+    anywhere — a small firm doesn't need a transition matrix for its own
+    columns. Inactive stages are never offered.
+    """
+    active_keys = [r["key"] for r in stage_config.list_stages(conn)]
+    if not active_keys:
+        active_keys = list(STAGES)
+    custom_keys = [k for k in active_keys if k not in STAGES]
+
+    if current_stage in _STAGE_TRANSITIONS:
+        builtin = [
+            s for s in _STAGE_TRANSITIONS[current_stage] if s in active_keys
+        ]
+        return builtin + [k for k in custom_keys if k != current_stage]
+    # Custom current stage: anything active except itself.
+    return [k for k in active_keys if k != current_stage]
+
+
+def _is_lost_stage(conn: sqlite3.Connection, stage: str) -> bool:
+    return stage in stage_config.lost_stage_keys(conn)
+
+
+def advance_stage(
+    conn: sqlite3.Connection,
+    opp_id: int,
+    new_stage: str,
+    lost_reason_id: int | None = None,
+    lost_note: str | None = None,
+) -> None:
     """Move an opportunity to *new_stage*, validating the transition.
+
+    - Applies the target stage's configured default probability (prorated
+      revenue follows the stage unless the user edits it afterwards).
+    - Moving into a lost-flagged stage records ``lost_reason_id`` /
+      ``lost_note``; moving out of one clears them.
 
     Raises ``ValueError`` if the transition is not allowed.
     """
@@ -175,26 +226,70 @@ def advance_stage(conn: sqlite3.Connection, opp_id: int, new_stage: str) -> None
         raise ValueError(f"Opportunity {opp_id} not found")
 
     old_stage = opp["stage"]
-    allowed = _STAGE_TRANSITIONS.get(old_stage, ())
-    if new_stage not in allowed:
-        raise ValueError(
-            f"Cannot transition from '{old_stage}' to '{new_stage}'. "
-            f"Allowed transitions: {allowed}"
-        )
+    if old_stage in _STAGE_TRANSITIONS and new_stage in STAGES:
+        allowed = _STAGE_TRANSITIONS[old_stage]
+        if new_stage not in allowed:
+            raise ValueError(
+                f"Cannot transition from '{old_stage}' to '{new_stage}'. "
+                f"Allowed transitions: {allowed}"
+            )
+    elif new_stage not in STAGES:
+        # Custom target: must exist and be active in the config table.
+        if stage_config.get_stage_by_key(conn, new_stage) is None:
+            raise ValueError(f"Unknown stage '{new_stage}'")
 
     now = _now()
-    conn.execute(
-        "UPDATE opportunities SET stage = ?, updated_at = ? WHERE id = ?",
-        (new_stage, now, opp_id),
-    )
-    _log_activity(
-        conn,
-        "opportunity",
-        opp_id,
-        "stage_change",
-        {"old_stage": old_stage, "new_stage": new_stage},
-    )
+    new_probability = stage_config.stage_probability(conn, new_stage)
+    if new_probability is None:
+        new_probability = opp["probability"]
+
+    going_lost = _is_lost_stage(conn, new_stage)
+    leaving_lost = _is_lost_stage(conn, old_stage) and not going_lost
+
+    if going_lost:
+        conn.execute(
+            "UPDATE opportunities "
+            "SET stage = ?, probability = ?, lost_reason_id = ?, "
+            "    lost_note = ?, updated_at = ? "
+            "WHERE id = ?",
+            (new_stage, new_probability, lost_reason_id, lost_note, now, opp_id),
+        )
+    elif leaving_lost:
+        conn.execute(
+            "UPDATE opportunities "
+            "SET stage = ?, probability = ?, lost_reason_id = NULL, "
+            "    lost_note = NULL, updated_at = ? "
+            "WHERE id = ?",
+            (new_stage, new_probability, now, opp_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE opportunities "
+            "SET stage = ?, probability = ?, updated_at = ? WHERE id = ?",
+            (new_stage, new_probability, now, opp_id),
+        )
+
+    details: dict[str, Any] = {"old_stage": old_stage, "new_stage": new_stage}
+    if going_lost and lost_reason_id is not None:
+        details["lost_reason_id"] = lost_reason_id
+    if going_lost and lost_note:
+        details["lost_note"] = lost_note
+    _log_activity(conn, "opportunity", opp_id, "stage_change", details)
     conn.commit()
+
+
+def mark_lost(
+    conn: sqlite3.Connection,
+    opp_id: int,
+    lost_reason_id: int | None = None,
+    lost_note: str | None = None,
+) -> None:
+    """Move an opportunity to the (first) lost stage, recording why."""
+    lost_keys = stage_config.lost_stage_keys(conn)
+    advance_stage(
+        conn, opp_id, lost_keys[0],
+        lost_reason_id=lost_reason_id, lost_note=lost_note,
+    )
 
 
 def convert_to_project(conn: sqlite3.Connection, opp_id: int) -> int:
@@ -267,16 +362,24 @@ def get_pipeline_summary(conn: sqlite3.Connection) -> dict[str, Any]:
             "active_count": 12,
         }
     """
-    placeholders = ", ".join("?" for _ in ACTIVE_STAGES)
+    open_keys = stage_config.open_stage_keys(conn)
+    if not open_keys:
+        return {
+            "by_stage": {},
+            "total_pipeline_value": 0.0,
+            "weighted_pipeline_total": 0.0,
+            "active_count": 0,
+        }
+    placeholders = ", ".join("?" for _ in open_keys)
     rows = conn.execute(
         "SELECT stage, "
         "       COUNT(*) AS count, "
         "       COALESCE(SUM(estimated_value), 0) AS total_value, "
         "       COALESCE(SUM(estimated_value * probability / 100.0), 0) AS weighted_value "
         "FROM opportunities "
-        f"WHERE stage IN ({placeholders}) "  # noqa: S608 — placeholders are constant
+        f"WHERE stage IN ({placeholders}) "  # noqa: S608 — placeholders only
         "GROUP BY stage",
-        ACTIVE_STAGES,
+        open_keys,
     ).fetchall()
 
     by_stage: dict[str, dict[str, Any]] = {}
@@ -305,15 +408,19 @@ def get_pipeline_summary(conn: sqlite3.Connection) -> dict[str, Any]:
 def count_active_opportunities(conn: sqlite3.Connection) -> int:
     """Return the number of opportunities in an *active* (open) stage.
 
-    Active stages are defined by :data:`ACTIVE_STAGES` — every stage except
-    the closed/terminal ones (won, lost, dormant). This is the canonical query
-    behind the "Active Opportunities" KPI; the pipeline page uses the same
-    constant to label its "Active" list, so the two provably agree.
+    Active stages are read from the crm_stages config table (active AND NOT
+    is_closed); with the default seed that equals :data:`ACTIVE_STAGES` —
+    every stage except the closed/terminal ones (won, lost, dormant). This
+    is the canonical query behind the "Active Opportunities" KPI; the
+    pipeline page uses the same source, so the two provably agree.
     """
-    placeholders = ", ".join("?" for _ in ACTIVE_STAGES)
+    open_keys = stage_config.open_stage_keys(conn)
+    if not open_keys:
+        return 0
+    placeholders = ", ".join("?" for _ in open_keys)
     row = conn.execute(
         f"SELECT COUNT(*) AS cnt FROM opportunities WHERE stage IN ({placeholders})",  # noqa: S608
-        ACTIVE_STAGES,
+        open_keys,
     ).fetchone()
     return row["cnt"]
 
@@ -335,8 +442,13 @@ def get_win_loss_stats(
             "total_won_value": 62500.0,
         }
     """
-    where_parts: list[str] = ["stage IN ('won', 'lost')"]
-    params: list[Any] = []
+    won_keys = stage_config.won_stage_keys(conn)
+    lost_keys = stage_config.lost_stage_keys(conn)
+    outcome_keys = tuple(won_keys) + tuple(lost_keys)
+
+    placeholders = ", ".join("?" for _ in outcome_keys)
+    where_parts: list[str] = [f"stage IN ({placeholders})"]
+    params: list[Any] = list(outcome_keys)
 
     if date_from:
         where_parts.append("updated_at >= ?")
@@ -348,7 +460,7 @@ def get_win_loss_stats(
     where_clause = " AND ".join(where_parts)
 
     rows = conn.execute(
-        f"SELECT stage, COUNT(*) AS cnt, COALESCE(SUM(estimated_value), 0) AS total_val "
+        f"SELECT stage, COUNT(*) AS cnt, COALESCE(SUM(estimated_value), 0) AS total_val "  # noqa: S608
         f"FROM opportunities WHERE {where_clause} GROUP BY stage",
         params,
     ).fetchall()
@@ -357,11 +469,11 @@ def get_win_loss_stats(
     lost = 0
     won_value = 0.0
     for row in rows:
-        if row["stage"] == "won":
-            won = row["cnt"]
-            won_value = row["total_val"]
-        elif row["stage"] == "lost":
-            lost = row["cnt"]
+        if row["stage"] in won_keys:
+            won += row["cnt"]
+            won_value += row["total_val"]
+        elif row["stage"] in lost_keys:
+            lost += row["cnt"]
 
     total = won + lost
     win_rate = (won / total * 100) if total > 0 else 0.0
@@ -374,6 +486,50 @@ def get_win_loss_stats(
         "avg_deal_size": round(avg_deal, 2),
         "total_won_value": won_value,
     }
+
+
+def get_lost_reason_breakdown(
+    conn: sqlite3.Connection,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """Lost opportunities grouped by reason (count + value), biggest first.
+
+    Opportunities lost without a recorded reason group under
+    ``"(no reason recorded)"``.
+    """
+    lost_keys = stage_config.lost_stage_keys(conn)
+    placeholders = ", ".join("?" for _ in lost_keys)
+    where_parts: list[str] = [f"o.stage IN ({placeholders})"]
+    params: list[Any] = list(lost_keys)
+
+    if date_from:
+        where_parts.append("o.updated_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_parts.append("o.updated_at <= ?")
+        params.append(date_to)
+
+    where_clause = " AND ".join(where_parts)
+    rows = conn.execute(
+        f"SELECT COALESCE(lr.name, '(no reason recorded)') AS reason, "  # noqa: S608
+        f"       COUNT(*) AS count, "
+        f"       COALESCE(SUM(o.estimated_value), 0) AS total_value "
+        f"FROM opportunities o "
+        f"LEFT JOIN lost_reasons lr ON lr.id = o.lost_reason_id "
+        f"WHERE {where_clause} "
+        f"GROUP BY COALESCE(lr.name, '(no reason recorded)') "
+        f"ORDER BY count DESC, total_value DESC",
+        params,
+    ).fetchall()
+    return [
+        {
+            "reason": r["reason"],
+            "count": r["count"],
+            "total_value": r["total_value"],
+        }
+        for r in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
