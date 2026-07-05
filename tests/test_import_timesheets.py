@@ -57,6 +57,10 @@ def hr_dir(tmp_path):
         # job number not in projects
         [datetime(2026, 7, 2), "269999", "Ghost Project", "Not tracked",
          "Professional Engineer", "N", 2, 190, 380, None],
+        # blank Rate (older files carry uncached VLOOKUP formulas) ->
+        # importer derives the std rate from fee_schedule
+        [datetime(2026, 7, 3), "260304", "Buena Vista", "Blank rate row",
+         "Engineering Technician", "N", 1, None, None, None],
         # row without hours -> ignored by the parser
         [datetime(2026, 7, 3), "260304", "Buena Vista", "placeholder",
          "Professional Engineer", "N", None, None, 0, None],
@@ -98,8 +102,8 @@ def test_dry_run_writes_nothing(db, hr_dir, monkeypatch):
     assert report["summary"]["mode"] == "DRY-RUN"
     assert report["summary"]["files_found"] == 1
     assert len(report["summary"]["files_ignored"]) == 1  # the TEMPLATE
-    assert report["summary"]["rows_parsed"] == 5          # no-hours row dropped
-    assert report["summary"]["create"] == 3
+    assert report["summary"]["rows_parsed"] == 6          # no-hours row dropped
+    assert report["summary"]["create"] == 4
     assert report["summary"]["fail"] == 2
     assert len(_entries(db)) == 0                          # nothing written
 
@@ -109,13 +113,17 @@ def test_commit_then_rerun_is_idempotent(db, hr_dir, monkeypatch):
     monkeypatch.setattr("db.ensure_db", lambda: db)
 
     report = run_import(hr_dir, commit=True)
-    assert report["summary"]["create"] == 3
+    assert report["summary"]["create"] == 4
     assert report["summary"]["skip_duplicate"] == 0
     assert report["summary"]["fail"] == 2
 
     entries = _entries(db)
-    assert len(entries) == 3
+    assert len(entries) == 4
     by_date = {e["entry_date"]: e for e in entries}
+
+    derived = by_date["2026-07-03"]
+    assert float(derived["rate"]) == 110.0   # fee_schedule fallback
+    assert report["per_employee"]["Juan C. Castillo"]["rates_derived"] == 1
 
     normal = by_date["2026-06-29"]
     assert normal["project_id"] is not None
@@ -144,9 +152,9 @@ def test_commit_then_rerun_is_idempotent(db, hr_dir, monkeypatch):
     # Re-run: everything is a duplicate, nothing new is written
     report2 = run_import(hr_dir, commit=True)
     assert report2["summary"]["create"] == 0
-    assert report2["summary"]["skip_duplicate"] == 3
+    assert report2["summary"]["skip_duplicate"] == 4
     assert report2["summary"]["fail"] == 2
-    assert len(_entries(db)) == 3
+    assert len(_entries(db)) == 4
 
 
 def test_unknown_employee_folder_fails_rows(db, hr_dir, monkeypatch):
@@ -162,7 +170,7 @@ def test_unknown_employee_folder_fails_rows(db, hr_dir, monkeypatch):
     unmatched = [
         r for r in report["rows"] if r["employee"].startswith("UNMATCHED:")
     ]
-    assert len(unmatched) == 5
+    assert len(unmatched) == 6
     assert all(r["outcome"] == Outcome.FAIL for r in unmatched)
     # Jane's rows were never created
-    assert len(_entries(db)) == 3
+    assert len(_entries(db)) == 4

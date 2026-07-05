@@ -189,11 +189,15 @@ def run_import(
     commit: bool = False,
     report_path: Path | None = None,
 ) -> dict:
-    from db import ensure_db
-    from modules.timekeeping.crud import create_time_entry, list_employees
+    import db as dbmod
+    from modules.timekeeping.crud import (
+        create_time_entry,
+        get_current_rate,
+        list_employees,
+    )
     from modules.timekeeping.export_xlsx import ROLE_FROM_DISPLAY
 
-    conn = ensure_db()
+    conn = dbmod.ensure_db()
     employees = list_employees(conn)
     projects = {
         r["job_number"]: r["id"]
@@ -278,14 +282,28 @@ def run_import(
 
             if role is None:
                 errors.append(f"unknown role label: {r['role_label']!r}")
-            if r["rate"] is None:
-                errors.append("missing Rate value")
+
+            # Rate: prefer the file's value; older workbooks carry uncached
+            # VLOOKUP formulas (data_only gives None) — fall back to the
+            # fee_schedule std rate, which is exactly what that formula
+            # computes (Fee_Rates lookup x 1.5 when OT).
+            std_rate = None
+            if r["rate"] is not None:
+                std_rate = round(r["rate"] / multiplier, 4)
+            elif role is not None:
+                try:
+                    std_rate = get_current_rate(conn, role)
+                    stats["rates_derived"] = stats.get("rates_derived", 0) + 1
+                except ValueError:
+                    errors.append(
+                        f"no Rate in file and no fee_schedule entry for "
+                        f"role '{role}'"
+                    )
 
             if errors:
                 outcome = Outcome.FAIL
                 stats["fail"] += 1
             else:
-                std_rate = round(r["rate"] / multiplier, 4)
                 computed_total = round(r["hours"] * std_rate * multiplier, 2)
                 stats["file_line_total"] += r["line_total"] or 0.0
                 stats["computed_line_total"] += computed_total
@@ -369,6 +387,9 @@ def _print_summary(report: dict) -> None:
               f"| skip {st['skip']} | fail {st['fail']}")
         print(f"    hours (create): {st['hours']:.2f}  "
               f"dollars (create): ${st['dollars']:,.2f}")
+        if st.get("rates_derived"):
+            print(f"    rates derived from fee_schedule (file had formula/"
+                  f"blank): {st['rates_derived']}")
         print(f"    file Line Total sum:     ${st['file_line_total']:,.2f}")
         print(f"    computed Line Total sum: ${st['computed_line_total']:,.2f}")
     failures = [r for r in report["rows"] if r["outcome"] == Outcome.FAIL]
