@@ -1,5 +1,49 @@
 # Changelog
 
+## CRM polish (phase 2 of the Odoo-inspired plan) -- 2026-07-05
+
+Implements `docs/audit/03_decisions.md` Q2 phase 2: finish the
+proposals->opportunities bridge, configurable stages, lost reasons, and
+prorated (expected) revenue. Schema changes are additive; the seeded
+defaults reproduce the previous hardcoded behavior exactly.
+
+### Schema (additive)
+- New `crm_stages` table (key/name/sequence/probability/is_won/is_lost/
+  is_closed/active), seeded with the original 7 stages.
+- New `lost_reasons` table, seeded with 5 defaults (Price, Went with
+  competitor, No response / went dark, Project cancelled, Other).
+- New `opportunities` columns: `lost_reason_id`, `lost_note`,
+  `source_proposal_status`.
+- Fresh installs no longer put a CHECK on `opportunities.stage` (validated
+  at the app layer against crm_stages). Pre-existing databases keep their
+  CHECK; the seeded default stages keep working there unchanged.
+
+### Bridge (db/__init__.py)
+- Dedupe: proposal revisions for the same project no longer create
+  duplicate opportunities (newest proposal per project wins).
+- Fields carried: client contact name/email/phone now flow onto bridged
+  opportunities.
+- Status sync back: proposal status changes re-stage the bridged
+  opportunity (with the stage's default probability) unless the user
+  already moved it manually -- then the manual stage wins.
+
+### CRM module + page
+- Pipeline queries (CRM page, dashboard tile, financials forecast) read
+  the open-stage set from crm_stages; parameterized IN-lists throughout.
+- `advance_stage` applies the target stage's configured probability and
+  records/clears lost reason + note; new `mark_lost`,
+  `allowed_next_stages`, `get_lost_reason_breakdown` helpers.
+- Page: config-driven stage tabs/badges/buttons, Mark-as-Lost form with
+  reason + note, Lost-by-Reason analytics, Expected Revenue metric
+  (renamed from Weighted Forecast, same math), and a Settings tab to
+  rename/reorder/re-probability/deactivate/add stages and manage the
+  lost-reason taxonomy.
+
+### Tests
+- 36 new tests (`test_crm_stages_config.py`, `test_crm_lost_reasons.py`,
+  `test_crm_bridge.py`, `test_crm_page_smoke.py`). Full suite: 606 passed
+  on SQLite and 606 on Postgres.
+
 ## Hosting docs reconciled to Azure -- 2026-05-29
 
 Documentation-only pass. Reconciled stale Phase 8 hosting references from the
