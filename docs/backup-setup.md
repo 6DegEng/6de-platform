@@ -51,15 +51,20 @@ az role assignment create --role "Storage Blob Data Contributor" \
 az role assignment create --role "Key Vault Secrets User" \
   --assignee "$SP_ID" \
   --scope $(az keyvault show --name sixde-kv-jc --query id -o tsv)
-
-# The workflow also opens/closes a temporary firewall rule on the Postgres
-# server, which needs Contributor on the server (the deploy SP currently has
-# Contributor only on ACR + the web app):
-az role assignment create --role "Contributor" \
-  --assignee "$SP_ID" \
-  --scope $(az postgres flexible-server show --name sixde-platform-db-jc \
-            --resource-group 6de-platform-rg --query id -o tsv)
 ```
+
+Those **2 role assignments** are all the workflow needs. No firewall step and
+no role on the Postgres server: the server already has the
+`AllowAzureServices` (0.0.0.0) firewall rule (see
+`docs/azure-postgres-cutover-runbook.md`, Step 2), and GitHub-hosted runners
+egress from Azure IPs, so `pg_dump` connects directly.
+
+**Fallback** — if the first enabled run fails to connect (e.g. the
+AllowAzureServices rule was later removed as part of hardening): do **not**
+grant Contributor on the server. Create a custom role scoped to just
+`Microsoft.DBforPostgreSQL/flexibleServers/firewallRules/write` and
+`.../firewallRules/delete`, assign it to the deploy SP, and re-add a
+firewall open/close step to the workflow.
 
 ## 3. Flip the switch
 
@@ -97,8 +102,34 @@ pg_restore --dbname="postgresql://sixdeadmin:<PASSWORD>@sixde-platform-db-jc.pos
 ```
 
 Then point the app at `platform_restore` (or rename databases) once the data
-is verified. Admin user is **sixdeadmin** (East US 2 server — see the as-run
-notes in `docs/azure-postgres-cutover-runbook.md`).
+is verified. Admin user is **sixdeadmin** on the existing East US 2 server
+(see `scripts/azure/provision_app_service.sh`); the cutover runbook's
+`platformadmin` applies only to a fresh re-provision.
+
+## Don't let it die silently
+
+Three failure modes to know about:
+
+1. **A run fails** → the workflow opens a GitHub issue titled
+   `Nightly DB backup FAILED <date>` pointing at the failed run (that is why
+   the workflow has `permissions: issues: write`). Treat that issue as
+   urgent: the server's PITR window is only 7 days.
+2. **GitHub auto-disables the schedule.** In **public** repos, GitHub
+   disables scheduled workflows after **60 days without repository
+   activity** — and sends only a single easily-missed email. Combined with
+   the 90-day blob lifecycle below, this converges on **zero backups,
+   silently**. Mitigation: make the repo **private** (recommended anyway —
+   this is an internal ERP), or keep commit activity / re-enable the
+   workflow when GitHub warns.
+3. **Freshness check.** The daily brief — or at minimum a monthly manual
+   check — should assert the newest blob in `pg-backups` is **less than 48
+   hours old**:
+
+   ```bash
+   az storage blob list --account-name sixdebackupjc \
+     --container-name pg-backups --auth-mode login \
+     --query "max_by([], &properties.lastModified).{name:name, modified:properties.lastModified}" -o table
+   ```
 
 ## How to undo / disable
 

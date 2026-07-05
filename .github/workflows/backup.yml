@@ -7,8 +7,13 @@ name: Nightly Postgres backup to Blob
 #
 # ⛔ INERT UNTIL ENABLED: the job refuses to run unless the repo variable
 # BACKUP_ENABLED is "true" AND the one-time gated setup exists (storage
-# account + 2 role assignments) — see docs/backup-setup.md. Merging this
-# file changes nothing in production.
+# account + 2 role assignments: Storage Blob Data Contributor + Key Vault
+# Secrets User) — see docs/backup-setup.md. Merging this file changes
+# nothing in production.
+#
+# CONNECTIVITY: the server's existing AllowAzureServices (0.0.0.0) firewall
+# rule covers GitHub-hosted runners, which egress from Azure IPs — no
+# firewall step and no extra server-level role needed.
 #
 # AUTH: same GitHub-OIDC federated identity the deploy workflow uses (no
 # stored credentials). The scheduled run executes on main, which matches the
@@ -22,6 +27,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  issues: write   # failure step opens an alert issue
 
 concurrency:
   group: pg-backup
@@ -50,48 +56,57 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Read DB connection string from Key Vault (masked)
+      # One step on purpose: the password is read, used by pg_dump, and
+      # discarded here — it is never written to GITHUB_ENV or any file.
+      - name: Read DB secret + pg_dump + integrity smoke check
         run: |
           url=$(az keyvault secret show --vault-name "$KEYVAULT" \
                   --name "$KV_SECRET" --query value -o tsv)
           echo "::add-mask::$url"
-          # Split into libpq pieces so the password never appears in argv.
-          # URL shape: postgresql://USER:PASS@HOST:5432/DB?sslmode=require
-          creds="${url#postgresql://}"; creds="${creds%%@*}"
-          hostpart="${url#*@}"; hostpart="${hostpart%%/*}"
-          PGUSER="${creds%%:*}"
-          PGPASSWORD="${creds#*:}"
-          # URL-decode the password (it was URL-encoded defensively at setup).
-          PGPASSWORD=$(python3 -c "import sys,urllib.parse;print(urllib.parse.unquote(sys.argv[1]))" "$PGPASSWORD")
+          # Parse the URL properly (handles special characters in the
+          # password without shell string surgery).
+          eval "$(python3 -c '
+          import shlex, sys, urllib.parse
+          u = urllib.parse.urlsplit(sys.argv[1])
+          print("export PGUSER=" + shlex.quote(u.username or ""))
+          print("export PGPASSWORD=" + shlex.quote(u.password or ""))
+          print("export PGHOST=" + shlex.quote(u.hostname or ""))
+          print("export PGPORT=" + shlex.quote(str(u.port or 5432)))
+          ' "$url")"
           echo "::add-mask::$PGPASSWORD"
-          {
-            echo "PGUSER=$PGUSER"
-            echo "PGPASSWORD=$PGPASSWORD"
-            echo "PGHOST=${hostpart%%:*}"
-            echo "PGPORT=5432"
-            echo "PGSSLMODE=require"
-          } >> "$GITHUB_ENV"
-
-      - name: Open a firewall hole for this runner (removed in cleanup)
-        run: |
-          ip=$(curl -s https://api.ipify.org)
-          az postgres flexible-server firewall-rule create \
-            --name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
-            --rule-name gh-backup-runner \
-            --start-ip-address "$ip" --end-ip-address "$ip" -o none
-
-      - name: pg_dump (custom format) + integrity check
-        run: |
+          export PGSSLMODE=require
           stamp=$(date -u +%Y-%m-%d_%H%M)
           file="platform_${stamp}.dump"
           pg_dump --dbname="$PG_DB" -Fc --no-owner --file "$file"
-          # A dump that pg_restore can't list is not a backup.
+          # Smoke check only: pg_restore --list reads the table of contents,
+          # proving the file is a parseable archive — it does NOT verify the
+          # data inside. The size checks below add a coarse data signal.
           pg_restore --list "$file" > /dev/null
           size=$(stat -c%s "$file")
           echo "Dump $file is $size bytes"
           # 68 projects + schema should never be near-empty; fail loudly.
           test "$size" -gt 20000
           echo "DUMP_FILE=$file" >> "$GITHUB_ENV"
+
+      - name: Sanity-check size against the newest existing backup
+        run: |
+          # A dump that suddenly shrank by half likely means data loss or a
+          # partial dump — refuse to overwrite history with it.
+          prev=$(az storage blob list \
+                   --auth-mode login \
+                   --account-name "$STORAGE_ACCOUNT" \
+                   --container-name "$CONTAINER" \
+                   --query "max_by([], &properties.lastModified).properties.contentLength" \
+                   -o tsv)
+          size=$(stat -c%s "$DUMP_FILE")
+          if [ -z "$prev" ] || [ "$prev" = "None" ]; then
+            echo "No prior blob — skipping size comparison (first run)."
+          elif [ "$size" -lt $((prev / 2)) ]; then
+            echo "::error::New dump ($size B) is <50% of the newest existing backup ($prev B)."
+            exit 1
+          else
+            echo "New dump: $size B; newest existing: $prev B — OK."
+          fi
 
       - name: Upload to Blob Storage
         run: |
@@ -112,9 +127,11 @@ jobs:
             --name "$DUMP_FILE" \
             --query "{name:name, size:properties.contentLength}" -o table
 
-      - name: Close the firewall hole (always)
-        if: always()
+      - name: Open an issue on failure (no silent death)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          az postgres flexible-server firewall-rule delete \
-            --name "$PG_SERVER" --resource-group "$RESOURCE_GROUP" \
-            --rule-name gh-backup-runner --yes -o none || true
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Nightly DB backup FAILED $(date -u +%Y-%m-%d)" \
+            --body "The nightly Postgres backup workflow failed. Investigate before the 7-day PITR window closes: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
