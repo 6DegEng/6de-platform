@@ -1,17 +1,21 @@
-"""Regression tests for the Projects AG Grid HTML cell renderers.
+"""Regression tests for the Projects AG Grid pill/bar cell renderers.
 
-Bug (fix/projects-grid-html): AG Grid v32+ (streamlit-aggrid bundles v34)
-assigns a cellRenderer function's *string* return value via
-``element.textContent`` instead of ``innerHTML``. A renderer that returns a
-raw HTML string (``return `<span ...>` ``) therefore shows up in the cell as
-literal escaped HTML — e.g. ``<span style="...background:#F59E0B;..."></span>``
-— for every row, instead of a rendered pill / progress bar.
+Contract (fix/projects-grid-react-error-31): in streamlit-aggrid 1.2.x
+(AG Grid React v34) a *plain function* cellRenderer is mounted as a React
+component, so returning a DOM element from one throws "Minified React error
+#31: Objects are not valid as a React child (found: [object
+HTMLSpanElement])" and the whole grid dies behind a "Component Error"
+banner. Returning an HTML *string* is no better — AG Grid assigns it via
+``textContent`` and the markup shows up as literal escaped text.
 
-The fix: each HTML-emitting renderer must build and return a DOM *element*
-(``document.createElement(...)`` + ``el.innerHTML = ...``), not an HTML string.
+The only safe shape is an AG Grid *JS component class* implementing
+``init(params)`` / ``getGui()`` / ``refresh()`` — AG Grid instantiates it
+outside React entirely. Each renderer builds its DOM in ``init`` via
+``document.createElement`` (labels set with ``textContent``, never
+interpolated into innerHTML) and hands it back from ``getGui``.
 
-These tests inspect the generated JsCode so the specific defect (a bare
-``return `<...` `` HTML string with no DOM element) would be caught.
+These tests inspect the generated JsCode so any regression back to a plain
+function renderer or a bare ``return `<...` `` HTML string is caught.
 """
 from __future__ import annotations
 
@@ -34,8 +38,8 @@ from streamlit_app.components.project_grid import (  # noqa: E402
     projects_to_dataframe,
 )
 
-# Renderers that emit styled HTML pills / bars. Each MUST hand AG Grid a DOM
-# element (so AG Grid sets innerHTML), never a bare HTML string.
+# Renderers that emit styled pills / bars. Each MUST be a JS component class
+# that builds and hands AG Grid a DOM element — never a bare HTML string.
 _HTML_RENDERER_BUILDERS = {
     "status": _build_status_renderer,
     "priority": _build_priority_renderer,
@@ -63,28 +67,44 @@ _TEXT_COLUMNS = (
 
 @pytest.mark.parametrize("name,builder", list(_HTML_RENDERER_BUILDERS.items()))
 def test_html_renderer_returns_dom_element_not_string(name, builder):
-    """Each HTML renderer must return a DOM element with innerHTML set.
+    """Each renderer must build a DOM element, never return an HTML string.
 
-    Catches the exact defect: returning a raw HTML string makes AG Grid v34
-    render it via textContent (literal escaped ``<span ...>`` text).
+    Catches the original defect: returning a raw HTML string makes AG Grid
+    v34 render it via textContent (literal escaped ``<span ...>`` text).
     """
     js = builder().js_code
 
-    # The fix's fingerprint: build an element and set its innerHTML.
+    # The fix's fingerprint: build a real DOM element.
     assert "document.createElement" in js, (
-        f"{name} renderer must create a DOM element so AG Grid renders HTML "
-        f"via innerHTML, not textContent"
-    )
-    assert ".innerHTML" in js, (
-        f"{name} renderer must assign markup to element.innerHTML"
+        f"{name} renderer must create a DOM element instead of returning "
+        f"an HTML string (AG Grid v34 would escape the string)"
     )
 
     # The defect itself: a bare `return `<tag...` HTML string. After the fix
-    # the HTML markup is assigned to innerHTML and the function returns the
-    # element, so no `return` should be immediately followed by an HTML tag.
+    # the DOM is built in init() and getGui() returns the element, so no
+    # `return` should be immediately followed by an HTML tag.
     assert not re.search(r"return\s*`?\s*<[a-zA-Z]", js), (
         f"{name} renderer still returns a raw HTML string — AG Grid v34 will "
         f"escape it and show literal markup in the cell"
+    )
+
+
+@pytest.mark.parametrize("name", ["status", "priority", "lifecycle_bucket"])
+def test_label_renderers_use_textcontent_not_innerhtml(name):
+    """XSS hardening: label-bearing pill renderers must set the (data-driven)
+    label via ``textContent`` and must not interpolate it into innerHTML.
+
+    (The percent renderer only interpolates numbers, so innerHTML is fine
+    there.)
+    """
+    js = _HTML_RENDERER_BUILDERS[name]().js_code
+    assert ".textContent" in js, (
+        f"{name} renderer must assign the label via textContent so cell "
+        f"values can never inject markup"
+    )
+    assert ".innerHTML" not in js, (
+        f"{name} renderer must not build markup via innerHTML — the label "
+        f"is data-driven and would be an XSS sink"
     )
 
 
