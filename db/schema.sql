@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
                     )),
     -- Stage values are validated against the crm_stages config table at the
     -- app layer (modules/crm) so stages stay configurable. Databases created
-    -- before 2026-07 still carry the original 7-value CHECK constraint; those
+    -- before 2026-07 still carry the original 7-value CHECK constraint and
     -- continue to work with the seeded default stages.
     stage           TEXT    NOT NULL DEFAULT 'lead',
     estimated_value REAL    DEFAULT 0,
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
 -- CRM STAGES (configurable pipeline stages — crm-polish phase 2)
 -- key    = stable identifier stored in opportunities.stage
 -- name   = display label (renameable without touching data)
--- is_won / is_lost mark the terminal outcome stages; is_closed marks any
+-- is_won / is_lost mark the terminal outcome stages. is_closed marks any
 -- stage excluded from the open pipeline (won, lost, dormant/parked).
 -- probability = default deal probability applied on stage change.
 -- ============================================================

@@ -6,6 +6,7 @@ stage, client management, and analytics (win/loss, service-line breakdown).
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from datetime import date
 from typing import Any
@@ -24,14 +25,14 @@ if str(_PLATFORM_ROOT) not in sys.path:
 
 from db import ensure_db  # noqa: E402
 from modules.crm.crud import (  # noqa: E402
-    ACTIVE_STAGES,
     SOURCES,
     SERVICE_LINES,
-    STAGES,
     advance_stage,
+    allowed_next_stages,
     convert_to_project,
     create_client,
     create_opportunity,
+    get_lost_reason_breakdown,
     get_pipeline_summary,
     get_win_loss_stats,
     list_clients,
@@ -39,6 +40,15 @@ from modules.crm.crud import (  # noqa: E402
     search_opportunities,
     update_client,
     update_opportunity,
+)
+from modules.crm.stages import (  # noqa: E402
+    DEFAULT_STAGES,
+    create_lost_reason,
+    create_stage,
+    list_lost_reasons,
+    list_stages,
+    set_lost_reason_active,
+    update_stage,
 )
 from streamlit_app.components.formatters import (  # noqa: E402
     format_currency,
@@ -59,18 +69,27 @@ st.caption("6th Degree Engineering -- Opportunity Pipeline and Client Management
 conn = ensure_db()
 
 # ---------------------------------------------------------------------------
-# Constants / labels
+# Stage configuration — read from the crm_stages table (seeded with the
+# original 7 stages, editable in the Settings tab).
 # ---------------------------------------------------------------------------
+_stage_rows = list_stages(conn, include_inactive=True)
+if not _stage_rows:
+    # Pre-migration fallback: synthesize rows from the seeded defaults.
+    _stage_rows = [
+        {
+            "id": None, "key": k, "name": n, "sequence": seq,
+            "probability": prob, "is_won": w, "is_lost": lo,
+            "is_closed": c, "active": 1,
+        }
+        for k, n, seq, prob, w, lo, c in DEFAULT_STAGES
+    ]
 
-STAGE_LABELS: dict[str, str] = {
-    "lead":          "Lead",
-    "qualifying":    "Qualifying",
-    "proposal_sent": "Proposal Sent",
-    "negotiating":   "Negotiating",
-    "won":           "Won",
-    "lost":          "Lost",
-    "dormant":       "Dormant",
-}
+STAGE_BY_KEY: dict[str, Any] = {r["key"]: r for r in _stage_rows}
+STAGE_LABELS: dict[str, str] = {r["key"]: r["name"] for r in _stage_rows}
+ACTIVE_STAGE_KEYS: list[str] = [r["key"] for r in _stage_rows if r["active"]]
+OPEN_STAGE_KEYS: list[str] = [
+    r["key"] for r in _stage_rows if r["active"] and not r["is_closed"]
+]
 
 SERVICE_LINE_LABELS: dict[str, str] = {
     "structural":      "Structural",
@@ -104,23 +123,32 @@ STAGE_COLORS: dict[str, str] = {
     "dormant":       "gray",
 }
 
-# Which stages can an opportunity be advanced to from each stage
-_NEXT_STAGES: dict[str, list[str]] = {
-    "lead":          ["qualifying", "lost", "dormant"],
-    "qualifying":    ["proposal_sent", "lost", "dormant"],
-    "proposal_sent": ["negotiating", "won", "lost", "dormant"],
-    "negotiating":   ["won", "lost", "dormant"],
-    "won":           ["dormant"],
-    "lost":          ["lead", "dormant"],
-    "dormant":       ["lead"],
-}
+
+def _stage_color(stage: str) -> str:
+    """Badge color: built-ins keep their colors; custom stages by flags."""
+    if stage in STAGE_COLORS:
+        return STAGE_COLORS[stage]
+    row = STAGE_BY_KEY.get(stage)
+    if row is None:
+        return "gray"
+    if row["is_won"]:
+        return "green"
+    if row["is_lost"]:
+        return "red"
+    if row["is_closed"]:
+        return "gray"
+    return "blue"
+
+
+def _stage_flag(stage: str, flag: str) -> bool:
+    row = STAGE_BY_KEY.get(stage)
+    return bool(row and row[flag])
 
 
 def _stage_badge(stage: str) -> str:
     """Colored Streamlit Markdown badge for a pipeline stage."""
-    color = STAGE_COLORS.get(stage, "gray")
     label = STAGE_LABELS.get(stage, stage)
-    return f":{color}[**{label}**]"
+    return f":{_stage_color(stage)}[**{label}**]"
 
 
 def _date_to_str(d: date | None) -> str | None:
@@ -146,20 +174,21 @@ wl_stats = get_win_loss_stats(conn)
 
 st.markdown("---")
 met_col1, met_col2, met_col3, met_col4 = st.columns(4)
+_open_labels = ", ".join(STAGE_LABELS.get(k, k) for k in OPEN_STAGE_KEYS)
 met_col1.metric(
     "Total Pipeline Value",
     format_currency(summary["total_pipeline_value"]),
-    help="Sum of estimated values for active opportunities (lead/qualifying/proposal_sent/negotiating; excludes won/lost/dormant)",
+    help=f"Gross sum of estimated values for open opportunities ({_open_labels}; excludes closed stages)",
 )
 met_col2.metric(
-    "Weighted Forecast",
+    "Expected Revenue",
     format_currency(summary["weighted_pipeline_total"]),
-    help="Pipeline value weighted by probability",
+    help="Prorated pipeline: estimated value x probability per opportunity. Probability defaults follow the stage (editable in Settings).",
 )
 met_col3.metric(
     "Active Opportunities",
     str(summary["active_count"]),
-    help="Opportunities in an open stage: lead, qualifying, proposal_sent, or negotiating (excludes won/lost/dormant)",
+    help=f"Opportunities in an open stage ({_open_labels}; excludes closed stages)",
 )
 met_col4.metric(
     "Win Rate",
@@ -174,6 +203,10 @@ st.markdown("---")
 # ---------------------------------------------------------------------------
 clients = list_clients(conn)
 client_map: dict[int, str] = {c["id"]: c["name"] for c in clients}
+
+_all_lost_reasons = list_lost_reasons(conn, include_inactive=True)
+LOST_REASON_NAMES: dict[int, str] = {r["id"]: r["name"] for r in _all_lost_reasons}
+_active_lost_reasons = [r for r in _all_lost_reasons if r["active"]]
 
 with st.expander("New Opportunity", expanded=False):
     with st.form("create_opp_form", clear_on_submit=True):
@@ -281,8 +314,8 @@ with st.expander("New Opportunity", expanded=False):
 # ---------------------------------------------------------------------------
 # Main tabs
 # ---------------------------------------------------------------------------
-tab_pipeline, tab_clients, tab_analytics = st.tabs(
-    ["Pipeline", "Clients", "Analytics"]
+tab_pipeline, tab_clients, tab_analytics, tab_settings = st.tabs(
+    ["Pipeline", "Clients", "Analytics", "Settings"]
 )
 
 # ============================= PIPELINE TAB ================================
@@ -295,12 +328,12 @@ with tab_pipeline:
         label_visibility="collapsed",
     )
 
-    # Stage sub-tabs
-    stage_tab_labels = ["All"] + [STAGE_LABELS[s] for s in STAGES]
+    # Stage sub-tabs — one per active configured stage, ordered by sequence.
+    stage_tab_labels = ["All"] + [STAGE_LABELS[s] for s in ACTIVE_STAGE_KEYS]
     stage_tabs = st.tabs(stage_tab_labels)
 
     _STAGE_TAB_MAP: dict[int, str | None] = {0: None}
-    for i, s in enumerate(STAGES):
+    for i, s in enumerate(ACTIVE_STAGE_KEYS):
         _STAGE_TAB_MAP[i + 1] = s
 
     for tab_idx, stage_tab in enumerate(stage_tabs):
@@ -329,13 +362,13 @@ with tab_pipeline:
             if stage_filter is None:
                 # "All" tab mixes active + closed stages. Spell out the split so
                 # this list reconciles with the "Active Opportunities" KPI above
-                # (which counts only ACTIVE_STAGES) instead of looking divergent.
-                active_shown = sum(1 for o in opps if o["stage"] in ACTIVE_STAGES)
+                # (which counts only open stages) instead of looking divergent.
+                active_shown = sum(1 for o in opps if o["stage"] in OPEN_STAGE_KEYS)
                 noun = "opportunity" if total_shown == 1 else "opportunities"
                 st.markdown(
                     f"**{total_shown} {noun} total** "
                     f"&nbsp;·&nbsp; {active_shown} active "
-                    f"(in {', '.join(ACTIVE_STAGES)})"
+                    f"(in {', '.join(OPEN_STAGE_KEYS)})"
                 )
             else:
                 noun = "opportunity" if total_shown == 1 else "opportunities"
@@ -364,7 +397,7 @@ with tab_pipeline:
                         st.markdown(f"**Estimated Value:** {value_str}")
                         st.markdown(f"**Probability:** {opp['probability'] or 0}%")
                         weighted = (opp["estimated_value"] or 0) * (opp["probability"] or 0) / 100.0
-                        st.markdown(f"**Weighted Value:** {format_currency(weighted)}")
+                        st.markdown(f"**Expected Revenue:** {format_currency(weighted)}")
                         st.markdown(f"**Close Date:** {format_date(opp['close_date'])}")
                     with d_col3:
                         st.markdown(f"**Contact:** {opp['contact_name'] or '---'}")
@@ -372,6 +405,12 @@ with tab_pipeline:
                         st.markdown(f"**Phone:** {opp['contact_phone'] or '---'}")
                         if opp["project_id"]:
                             st.markdown(f"**Project ID:** {opp['project_id']}")
+                    if _stage_flag(opp_stage, "is_lost"):
+                        reason_label = LOST_REASON_NAMES.get(
+                            opp["lost_reason_id"], "(no reason recorded)"
+                        )
+                        note_part = f" — {opp['lost_note']}" if opp["lost_note"] else ""
+                        st.markdown(f"**Lost Reason:** {reason_label}{note_part}")
                     if opp["notes"]:
                         st.markdown(f"**Notes:** {opp['notes']}")
 
@@ -380,14 +419,24 @@ with tab_pipeline:
                     # ---- Action buttons ----
                     action_col1, action_col2 = st.columns(2)
 
-                    next_stages = _NEXT_STAGES.get(opp_stage, [])
+                    next_stages = allowed_next_stages(conn, opp_stage)
+                    move_targets = [
+                        s for s in next_stages if not _stage_flag(s, "is_lost")
+                    ]
+                    lost_targets = [
+                        s for s in next_stages if _stage_flag(s, "is_lost")
+                    ]
                     with action_col1:
-                        if next_stages:
-                            adv_cols = st.columns(len(next_stages))
-                            for si, ns in enumerate(next_stages):
+                        if move_targets:
+                            adv_cols = st.columns(len(move_targets))
+                            for si, ns in enumerate(move_targets):
                                 with adv_cols[si]:
                                     btn_label = STAGE_LABELS.get(ns, ns)
-                                    btn_type = "primary" if ns == "won" else "secondary"
+                                    btn_type = (
+                                        "primary"
+                                        if _stage_flag(ns, "is_won")
+                                        else "secondary"
+                                    )
                                     if st.button(
                                         f"Move to {btn_label}",
                                         key=f"adv_{oid}_{ns}_{tab_idx}",
@@ -400,9 +449,16 @@ with tab_pipeline:
                                             st.rerun()
                                         except ValueError as e:
                                             st.error(str(e))
+                                        except sqlite3.IntegrityError:
+                                            st.error(
+                                                "This database still enforces the "
+                                                "original seven stages, so custom "
+                                                "stages can hold no opportunities "
+                                                "here yet."
+                                            )
 
                     with action_col2:
-                        if opp_stage == "won" and not opp["project_id"]:
+                        if _stage_flag(opp_stage, "is_won") and not opp["project_id"]:
                             if st.button(
                                 "Convert to Project",
                                 key=f"conv_{oid}_{tab_idx}",
@@ -415,8 +471,43 @@ with tab_pipeline:
                                     st.rerun()
                                 except ValueError as e:
                                     st.error(str(e))
-                        elif opp_stage == "won" and opp["project_id"]:
+                        elif _stage_flag(opp_stage, "is_won") and opp["project_id"]:
                             st.info(f"Already linked to Project ID {opp['project_id']}")
+
+                    # ---- Mark as Lost (asks for a reason) ----
+                    if lost_targets:
+                        lost_key = lost_targets[0]
+                        with st.form(f"lost_{oid}_{tab_idx}", clear_on_submit=True):
+                            st.markdown(f"**Mark as {STAGE_LABELS.get(lost_key, lost_key)}**")
+                            lr_col1, lr_col2 = st.columns(2)
+                            with lr_col1:
+                                reason_options: list[int | None] = [None] + [
+                                    r["id"] for r in _active_lost_reasons
+                                ]
+                                lost_reason_id = st.selectbox(
+                                    "Lost Reason",
+                                    options=reason_options,
+                                    format_func=lambda rid: (
+                                        "-- No reason --" if rid is None
+                                        else LOST_REASON_NAMES.get(rid, f"ID {rid}")
+                                    ),
+                                    key=f"lr_{oid}_{tab_idx}",
+                                )
+                            with lr_col2:
+                                lost_note = st.text_input(
+                                    "Note (optional)", key=f"ln_{oid}_{tab_idx}"
+                                )
+                            if st.form_submit_button(f"Mark as {STAGE_LABELS.get(lost_key, lost_key)}"):
+                                try:
+                                    advance_stage(
+                                        conn, oid, lost_key,
+                                        lost_reason_id=lost_reason_id,
+                                        lost_note=lost_note.strip() or None,
+                                    )
+                                    st.success("Marked as lost.")
+                                    st.rerun()
+                                except ValueError as e:
+                                    st.error(str(e))
 
                     st.markdown("---")
 
@@ -688,6 +779,25 @@ with tab_analytics:
 
     st.markdown("---")
 
+    # ---- Lost by Reason ----
+    st.subheader("Lost by Reason")
+    lost_breakdown = get_lost_reason_breakdown(
+        conn,
+        date_from=an_from.isoformat() if an_from else None,
+        date_to=an_to.isoformat() if an_to else None,
+    )
+    if lost_breakdown:
+        for row in lost_breakdown:
+            noun = "opp" if row["count"] == 1 else "opps"
+            st.markdown(
+                f"**{row['reason']}** -- {row['count']} {noun} -- "
+                f"{format_currency(row['total_value'])}"
+            )
+    else:
+        st.info("No lost opportunities in this range.")
+
+    st.markdown("---")
+
     # ---- Pipeline by Service Line ----
     st.subheader("Pipeline by Service Line")
 
@@ -737,7 +847,7 @@ with tab_analytics:
     # ---- Pipeline by Stage ----
     st.subheader("Pipeline by Stage")
     if summary["by_stage"]:
-        stage_order = ["lead", "qualifying", "proposal_sent", "negotiating", "won"]
+        stage_order = list(OPEN_STAGE_KEYS)
         for s in stage_order:
             if s in summary["by_stage"]:
                 data = summary["by_stage"][s]
@@ -788,3 +898,172 @@ with tab_analytics:
             )
     else:
         st.info("No won opportunities yet to show trends.")
+
+
+# ============================= SETTINGS TAB =================================
+with tab_settings:
+    st.subheader("Pipeline Stages")
+    st.caption(
+        "Rename, reorder (lower sequence = further left), set the default "
+        "probability applied when an opportunity enters the stage, or "
+        "deactivate stages you don't use. Won/Lost/Closed flags are fixed "
+        "per stage so historical analytics stay comparable."
+    )
+
+    # Databases created before this feature still carry a CHECK constraint
+    # limiting opportunities to the original seven stages.
+    _legacy_check = False
+    try:
+        _row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='opportunities'"
+        ).fetchone()
+        _legacy_check = bool(_row and _row["sql"] and "stage IN" in _row["sql"])
+    except sqlite3.OperationalError:
+        pass
+    if _legacy_check:
+        st.warning(
+            "This database was created before configurable stages: custom "
+            "stages can be defined and configured, but opportunities can only "
+            "be MOVED into the original seven stages until the database is "
+            "rebuilt. Rename/reorder/probability/deactivate all work fully."
+        )
+
+    if any(r["id"] is None for r in _stage_rows):
+        st.info("Stage configuration table not initialized yet — reload the app.")
+    else:
+        with st.form("stage_settings_form"):
+            hdr = st.columns([3, 2, 2, 2, 1])
+            hdr[0].markdown("**Name**")
+            hdr[1].markdown("**Sequence**")
+            hdr[2].markdown("**Probability %**")
+            hdr[3].markdown("**Type**")
+            hdr[4].markdown("**Active**")
+            for r in _stage_rows:
+                sid = r["id"]
+                c = st.columns([3, 2, 2, 2, 1])
+                c[0].text_input(
+                    "Name", value=r["name"], key=f"stg_name_{sid}",
+                    label_visibility="collapsed",
+                )
+                c[1].number_input(
+                    "Sequence", value=int(r["sequence"]), step=10,
+                    key=f"stg_seq_{sid}", label_visibility="collapsed",
+                )
+                c[2].number_input(
+                    "Probability", value=int(r["probability"]),
+                    min_value=0, max_value=100, step=5,
+                    key=f"stg_prob_{sid}", label_visibility="collapsed",
+                )
+                stage_type = (
+                    "Won" if r["is_won"]
+                    else "Lost" if r["is_lost"]
+                    else "Parked" if r["is_closed"]
+                    else "Open"
+                )
+                c[3].markdown(stage_type)
+                c[4].checkbox(
+                    "Active", value=bool(r["active"]), key=f"stg_act_{sid}",
+                    label_visibility="collapsed",
+                )
+
+            if st.form_submit_button("Save Stage Settings", type="primary"):
+                changed = 0
+                for r in _stage_rows:
+                    sid = r["id"]
+                    updates: dict[str, Any] = {}
+                    new_name = st.session_state[f"stg_name_{sid}"].strip()
+                    if new_name and new_name != r["name"]:
+                        updates["name"] = new_name
+                    if int(st.session_state[f"stg_seq_{sid}"]) != int(r["sequence"]):
+                        updates["sequence"] = int(st.session_state[f"stg_seq_{sid}"])
+                    if int(st.session_state[f"stg_prob_{sid}"]) != int(r["probability"]):
+                        updates["probability"] = int(st.session_state[f"stg_prob_{sid}"])
+                    if bool(st.session_state[f"stg_act_{sid}"]) != bool(r["active"]):
+                        updates["active"] = st.session_state[f"stg_act_{sid}"]
+                    if updates:
+                        update_stage(conn, sid, **updates)
+                        changed += 1
+                if changed:
+                    st.success(f"Updated {changed} stage{'s' if changed != 1 else ''}.")
+                    st.rerun()
+                else:
+                    st.info("No changes detected.")
+
+        with st.form("add_stage_form", clear_on_submit=True):
+            st.markdown("**Add Stage**")
+            as_col1, as_col2, as_col3 = st.columns([3, 2, 2])
+            with as_col1:
+                new_stage_name = st.text_input("Stage Name *", key="new_stage_name")
+            with as_col2:
+                new_stage_kind = st.selectbox(
+                    "Type",
+                    options=["open", "won", "lost", "closed"],
+                    format_func=lambda k: {
+                        "open": "Open (counts in pipeline)",
+                        "won": "Won (closed, counts as win)",
+                        "lost": "Lost (closed, counts as loss)",
+                        "closed": "Parked (closed, neither)",
+                    }[k],
+                    key="new_stage_kind",
+                )
+            with as_col3:
+                new_stage_prob = st.number_input(
+                    "Probability %", min_value=0, max_value=100, value=50,
+                    step=5, key="new_stage_prob",
+                )
+            if st.form_submit_button("Add Stage"):
+                if not new_stage_name.strip():
+                    st.error("Stage name is required.")
+                else:
+                    try:
+                        create_stage(
+                            conn, new_stage_name.strip(),
+                            probability=int(new_stage_prob),
+                            kind=new_stage_kind,
+                        )
+                        st.success(f"Stage '{new_stage_name.strip()}' added.")
+                        st.rerun()
+                    except (ValueError, sqlite3.IntegrityError) as e:
+                        st.error(str(e))
+
+    st.markdown("---")
+    st.subheader("Lost Reasons")
+    st.caption(
+        "The taxonomy offered when an opportunity is marked lost. Deactivated "
+        "reasons stay attached to historical opportunities but are no longer "
+        "offered."
+    )
+
+    if _all_lost_reasons:
+        with st.form("lost_reason_settings_form"):
+            for r in _all_lost_reasons:
+                st.checkbox(
+                    r["name"], value=bool(r["active"]), key=f"lr_act_{r['id']}",
+                )
+            if st.form_submit_button("Save Lost Reasons"):
+                changed = 0
+                for r in _all_lost_reasons:
+                    new_active = bool(st.session_state[f"lr_act_{r['id']}"])
+                    if new_active != bool(r["active"]):
+                        set_lost_reason_active(conn, r["id"], new_active)
+                        changed += 1
+                if changed:
+                    st.success(
+                        f"Updated {changed} reason{'s' if changed != 1 else ''}."
+                    )
+                    st.rerun()
+                else:
+                    st.info("No changes detected.")
+
+    with st.form("add_lost_reason_form", clear_on_submit=True):
+        nlr_name = st.text_input("New Lost Reason *", key="nlr_name")
+        if st.form_submit_button("Add Lost Reason"):
+            if not nlr_name.strip():
+                st.error("Reason name is required.")
+            else:
+                try:
+                    create_lost_reason(conn, nlr_name.strip())
+                    st.success(f"Lost reason '{nlr_name.strip()}' added.")
+                    st.rerun()
+                except (ValueError, sqlite3.IntegrityError):
+                    st.error("That reason already exists.")
