@@ -137,6 +137,11 @@ az keyvault secret set \
 (`-o none` matters — without it, az echoes the secret value, password
 included, into the terminal scrollback.)
 
+> Substitute the actual admin user in the connection string: the existing
+> East US 2 production server uses **`sixdeadmin`**, not `platformadmin`
+> (see the AS-RUN notes at the top) — `platformadmin` only applies to a
+> fresh server created via Step 1 as written.
+
 ✅ Verify: `az keyvault secret show --vault-name sixde-kv-jc --name platform-database-url --query name -o tsv` prints `platform-database-url`.
 
 ↩ Rollback: `az keyvault delete --name sixde-kv-jc`
