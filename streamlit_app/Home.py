@@ -196,7 +196,10 @@ with c11:
     total_projects = data.get("total_projects", 0)
     active_projects = data.get("active_projects", 0)
     pct = (active_projects / total_projects * 100) if total_projects else 0
-    st.metric("Active Rate", f"{pct:.0f}%")
+    st.metric("Working Rate", f"{pct:.0f}%",
+              help="Share of all projects in a working stage: Active, Drafting, "
+                   "AHJ/Permitting, Inspection, or Revisions. "
+                   "See docs/data_definitions.md §6.")
 with c12:
     bid_count = len(data.get("upcoming_bid_deadlines", []))
     st.metric("Bid Deadlines", f"{bid_count} upcoming")

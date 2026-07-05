@@ -114,13 +114,34 @@ WHERE status IN ('sent', 'overdue');
 **Source:** `projects` table — the `outstanding_balance` column populated by
 the project tracker import.
 
-**Definition:**
+**Definition (updated 2026-06-12 — working statuses only):**
 ```sql
 SELECT COALESCE(SUM(outstanding_balance), 0)
-FROM projects;
+FROM projects
+WHERE status IN ('active', 'drafting', 'ahj_permitting',
+                 'inspection', 'revisions');
 ```
 
+Only projects in a **working** stage count toward backlog dollars (see the
+"Active (Working) Projects" definition below, ratified 2026-06-12). Prospect,
+on-hold, completed, cancelled, and archived projects are excluded — a
+completed or cancelled project's residual is not backlog.
+
 **Where shown:** Home dashboard "Contracted Backlog" card.
+
+### Active (Working) Projects
+
+**Definition (ratified by Juan, 2026-06-12):** a project is *working* when
+its status is in the ACTIVE lifecycle bucket — `active`, `drafting`,
+`ahj_permitting`, `inspection`, or `revisions`. Prospect, on-hold,
+completed, cancelled, and archived do **not** count. The canonical list is
+`WORKING_STATUSES` in `modules/status_colors.py` (derived from
+`STATUS_TO_BUCKET`); dashboard queries build their `status IN (...)` filter
+from it.
+
+**Where shown:** Home "Active Projects" tile (count + "+N this month"
+delta), Home "Working Rate" tile (working ÷ total projects), and the
+Contracted Backlog filter above.
 
 **What it tells you:** *Total contracted work that has not yet been invoiced.*
 This is the project-contract-residual — the difference between what's been

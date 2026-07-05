@@ -37,6 +37,7 @@ from modules.permits.crud import (
     update_contact,
     update_permit,
 )
+from modules.status_colors import WORKING_STATUSES  # noqa: E402
 from streamlit_app.auth import require_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -208,10 +209,17 @@ conn = ensure_db()
 
 
 def _get_projects():
+    # Any working-stage project (WORKING_STATUSES: active/drafting/
+    # ahj_permitting/inspection/revisions) plus prospects and on-hold can
+    # take a new permit — a project in ahj_permitting is literally at the
+    # permitting stage and must be pickable here.
+    statuses = (*WORKING_STATUSES, "prospect", "on_hold")
+    placeholders = ", ".join("?" for _ in statuses)
     return conn.execute(
         "SELECT id, job_number, name FROM projects "
-        "WHERE status IN ('active', 'prospect', 'on_hold') "
-        "ORDER BY job_number DESC"
+        f"WHERE status IN ({placeholders}) "
+        "ORDER BY job_number DESC",
+        statuses,
     ).fetchall()
 
 

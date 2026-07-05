@@ -13,6 +13,7 @@ do NOT count toward the tile or the backlog dollars.
 from __future__ import annotations
 
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 _PLATFORM_ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +62,42 @@ def test_dashboard_backlog_sums_working_stages_only(db):
     # 100 outstanding on each of the 5 working projects; the other 5
     # (prospect/on_hold/completed/cancelled/archived) are excluded.
     assert data["project_outstanding"] == 500.0
+
+
+def test_new_projects_this_month_counts_current_month_starts_only(db):
+    """The "+N this month" delta uses start_date, filtered to working stages.
+
+    Seeds one working project started this month, one working project
+    started in a prior month, and one completed project started this month
+    — only the first may count.
+    """
+    month_start = date.today().replace(day=1)
+    prior_month = (month_start - timedelta(days=1)).replace(day=1)
+
+    create_project(
+        db,
+        name="P-started-this-month",
+        job_number="260901",
+        status="drafting",
+        start_date=month_start.isoformat(),
+    )
+    create_project(
+        db,
+        name="P-started-prior-month",
+        job_number="260902",
+        status="ahj_permitting",
+        start_date=prior_month.isoformat(),
+    )
+    create_project(
+        db,
+        name="P-completed-this-month",
+        job_number="260903",
+        status="completed",
+        start_date=month_start.isoformat(),
+    )
+
+    data = get_dashboard_data(db)
+    assert data["new_projects_this_month"] == 1
 
 
 def test_project_stats_working_count(db):
