@@ -5,6 +5,19 @@ through the same workflow rules the platform uses, and emits a per-row
 outcome report. Defaults to --dry-run; writing to the database requires
 the explicit --commit flag.
 
+Honesty note on "dry-run writes nothing": a dry-run never writes rows to
+projects/invoices/clients, but opening the database goes through
+``ensure_db()``, which performs its usual idempotent seed/migration writes
+(schema migrations, seed rules, employee seed) — pre-existing behavior
+shared with every other entry point.
+
+Refreshing synthesized invoice amounts: re-runs are idempotent and NEVER
+update an existing -L1/-L2 invoice (a changed amount could clobber a
+hand-edited record). Stale synthesized invoices are reported as
+SKIPPED-STALE instead. To refresh them from the tracker, first run
+``DELETE FROM invoices WHERE invoice_number LIKE '%-L_'`` and then re-run
+with --commit --synthesize-financials.
+
 Usage examples:
     # Dry-run with default map against the Projects sheet:
     python scripts/import_legacy_xlsx.py --file tracker.xlsx
@@ -308,41 +321,64 @@ def synthesize_invoices(row: dict[str, Any]) -> list[dict[str, Any]]:
     return invoices
 
 
-def client_identity(row: dict[str, Any]) -> tuple[str, str] | None:
-    """Normalized (company, contact) identity for dedupe, or None if absent."""
-    company = (row.get("_client_company") or "").strip()
-    contact = (row.get("_client_contact") or "").strip()
+def _norm_ws(value: str | None) -> str:
+    """Collapse internal whitespace and strip ends ('Acme  Corp ' -> 'Acme Corp')."""
+    return " ".join((value or "").split())
+
+
+def _client_key(company: str | None, contact: str | None) -> tuple[str, str] | None:
+    """The ONE dedupe identity shared by ensure_client and the dry-run preview.
+
+    Whitespace-collapsed, case-insensitive (name, company), where name is the
+    contact person when present, else the company string — exactly the key
+    ensure_client matches on, so the dry-run distinct-client count equals what
+    --commit actually creates.
+    """
+    company = _norm_ws(company)
+    contact = _norm_ws(contact)
     if not company and not contact:
         return None
-    return (company.lower(), contact.lower())
+    name = contact or company
+    return (name.lower(), company.lower())
 
 
-def ensure_client(conn, company: str | None, contact: str | None) -> int | None:
+def client_identity(row: dict[str, Any]) -> tuple[str, str] | None:
+    """Dedupe identity for a normalized tracker row, or None if absent."""
+    return _client_key(row.get("_client_company"), row.get("_client_contact"))
+
+
+def ensure_client(
+    conn, company: str | None, contact: str | None
+) -> tuple[int, bool] | None:
     """Find-or-create a client from tracker Company/Contact columns.
 
-    Matching is case-insensitive on (company, name). The client ``name`` is
-    the contact person when present, else the company string.
+    Matching is whitespace-collapsed and case-insensitive on (name, company)
+    via ``_client_key``. The client ``name`` is the contact person when
+    present, else the company string. Returns ``(client_id, created)`` where
+    ``created`` is True only when a new row was inserted, or None when both
+    columns are empty.
     """
-    company = (company or "").strip()
-    contact = (contact or "").strip()
-    if not company and not contact:
+    key = _client_key(company, contact)
+    if key is None:
         return None
+    company = _norm_ws(company)
+    contact = _norm_ws(contact)
     name = contact or company
 
     row = conn.execute(
         "SELECT id FROM clients "
         "WHERE LOWER(COALESCE(name,'')) = ? AND LOWER(COALESCE(company,'')) = ?",
-        (name.lower(), company.lower()),
+        key,
     ).fetchone()
     if row:
-        return int(row["id"])
+        return int(row["id"]), False
 
     cur = conn.execute(
         "INSERT INTO clients (name, company, notes) VALUES (?, ?, ?)",
         (name, company or None, "Created by legacy tracker import."),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    return int(cur.lastrowid), True
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +479,13 @@ def print_summary(report: dict) -> None:
             print(f"    Outstanding total:  ${fs['outstanding_total']:,.2f}")
         if fs["enabled"]["clients"]:
             print(f"    Distinct clients:   {fs['distinct_clients']}")
+        if fs.get("negative_value_rows"):
+            jobs = ", ".join(fs.get("negative_value_jobs", []))
+            print(
+                f"    WARNING: {fs['negative_value_rows']} row(s) with a "
+                f"NEGATIVE paid/outstanding value — no invoice synthesized "
+                f"for the negative amount(s). Jobs: {jobs}"
+            )
     print("=" * 60)
 
     # Print failures detail
@@ -475,11 +518,16 @@ def commit_rows(
     *,
     synthesize_financials: bool = False,
     create_clients: bool = False,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Actually persist CREATE / UPDATE rows to the database.
 
     Returns counters: {"invoices_created": n, "clients_created": n,
-    "clients_linked": n} (all 0 unless the corresponding flag is on).
+    "clients_linked": n, "stale_invoices": n, "row_errors": [...]}
+    (all 0/empty unless the corresponding flag is on / something failed).
+
+    Each row is isolated in its own try/except — one bad row (e.g. an
+    InvalidStatusTransition on an UPDATE) is recorded in ``row_errors``
+    and printed, and the import continues with the next row.
     """
     from db import ensure_db
     from modules.projects.crud import create_project, update_project
@@ -487,73 +535,126 @@ def commit_rows(
 
     if conn is None:
         conn = ensure_db()
-    counters = {"invoices_created": 0, "clients_created": 0, "clients_linked": 0}
+    counters: dict[str, Any] = {
+        "invoices_created": 0,
+        "clients_created": 0,
+        "clients_linked": 0,
+        "stale_invoices": 0,
+        "row_errors": [],
+    }
 
     for result, row in zip(results, normalized_rows):
         if result["outcome"] == Outcome.FAIL:
             continue
-
-        # Strip internal fields
-        data = {k: v for k, v in row.items() if not k.startswith("_") and v is not None}
-
-        if result["outcome"] == Outcome.CREATE:
-            if not data.get("job_number"):
-                data["job_number"] = next_job_code(conn)
-            project_id = create_project(conn, **data)
-        elif result["outcome"] == Outcome.UPDATE:
-            proj = conn.execute(
-                "SELECT id FROM projects WHERE job_number = ?",
-                (data["job_number"],),
-            ).fetchone()
-            if not proj:
-                continue
-            project_id = int(proj["id"])
-            upd = dict(data)
-            upd.pop("job_number", None)
-            upd.pop("name", None)  # don't overwrite name on update
-            if upd:
-                update_project(conn, project_id, **upd)
-        else:
-            continue
-
-        if create_clients:
-            before = conn.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"]
-            client_id = ensure_client(
-                conn, row.get("_client_company"), row.get("_client_contact")
+        try:
+            _commit_one_row(
+                conn, result, row, counters,
+                synthesize_financials=synthesize_financials,
+                create_clients=create_clients,
+                next_job_code=next_job_code,
+                create_project=create_project,
+                update_project=update_project,
             )
-            if client_id is not None:
-                after = conn.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"]
-                if after > before:
-                    counters["clients_created"] += 1
-                conn.execute(
-                    "UPDATE projects SET client_id = ? WHERE id = ? AND client_id IS NULL",
-                    (client_id, project_id),
-                )
-                conn.commit()
-                counters["clients_linked"] += 1
-
-        if synthesize_financials:
-            for inv in synthesize_invoices(row):
-                exists = conn.execute(
-                    "SELECT 1 FROM invoices WHERE invoice_number = ?",
-                    (inv["invoice_number"],),
-                ).fetchone()
-                if exists:
-                    continue  # idempotent re-runs: never duplicate
-                cols = ", ".join(inv.keys())
-                marks = ", ".join("?" for _ in inv)
-                conn.execute(
-                    f"INSERT INTO invoices (project_id, {cols}) "
-                    f"VALUES (?, {marks})",
-                    [project_id, *inv.values()],
-                )
-                conn.commit()
-                counters["invoices_created"] += 1
+        except Exception as exc:  # noqa: BLE001 — one bad row must not kill the run
+            err = {
+                "row": result.get("row"),
+                "job_number": result.get("job_number"),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            counters["row_errors"].append(err)
+            print(
+                f"  ERROR (row {err['row']}): [{err['job_number']}] "
+                f"{err['error']} — row skipped, continuing"
+            )
 
     return counters
     # NOTE: ensure_db() returns a cached, process-wide connection. Closing it
     # here poisons the cache for any later caller in the same process, so we
     # deliberately leave it open (the process exit closes it).
+
+
+def _commit_one_row(
+    conn,
+    result: dict,
+    row: dict[str, Any],
+    counters: dict[str, Any],
+    *,
+    synthesize_financials: bool,
+    create_clients: bool,
+    next_job_code,
+    create_project,
+    update_project,
+) -> None:
+    """Persist a single CREATE/UPDATE row (project + optional client/invoices)."""
+    # Strip internal fields
+    data = {k: v for k, v in row.items() if not k.startswith("_") and v is not None}
+
+    if result["outcome"] == Outcome.CREATE:
+        if not data.get("job_number"):
+            data["job_number"] = next_job_code(conn)
+        project_id = create_project(conn, **data)
+    elif result["outcome"] == Outcome.UPDATE:
+        proj = conn.execute(
+            "SELECT id FROM projects WHERE job_number = ?",
+            (data["job_number"],),
+        ).fetchone()
+        if not proj:
+            return
+        project_id = int(proj["id"])
+        upd = dict(data)
+        upd.pop("job_number", None)
+        upd.pop("name", None)  # don't overwrite name on update
+        if upd:
+            update_project(conn, project_id, **upd)
+    else:
+        return
+
+    if create_clients:
+        found = ensure_client(
+            conn, row.get("_client_company"), row.get("_client_contact")
+        )
+        if found is not None:
+            client_id, created = found
+            if created:
+                counters["clients_created"] += 1
+            cur = conn.execute(
+                "UPDATE projects SET client_id = ? WHERE id = ? AND client_id IS NULL",
+                (client_id, project_id),
+            )
+            conn.commit()
+            # rowcount is accurate for UPDATE on both sqlite and pg_compat;
+            # 0 when the project already had a client (link not overwritten).
+            counters["clients_linked"] += max(cur.rowcount or 0, 0)
+
+    if synthesize_financials:
+        for inv in synthesize_invoices(row):
+            existing = conn.execute(
+                "SELECT amount, notes FROM invoices WHERE invoice_number = ?",
+                (inv["invoice_number"],),
+            ).fetchone()
+            if existing:
+                # Idempotent re-runs: never duplicate, and never auto-update
+                # the amount (it could clobber a hand-edited invoice). If OUR
+                # synthesized invoice has drifted from the tracker, say so
+                # loudly instead.
+                db_amount = float(existing["amount"] or 0)
+                is_synth = _SYNTH_NOTE in (existing["notes"] or "")
+                if is_synth and db_amount != float(inv["amount"]):
+                    counters["stale_invoices"] += 1
+                    print(
+                        f"  SKIPPED-STALE {inv['invoice_number']} "
+                        f"(db=${db_amount:,.2f}, tracker=${inv['amount']:,.2f})"
+                    )
+                continue
+            cols = ", ".join(inv.keys())
+            marks = ", ".join("?" for _ in inv)
+            conn.execute(
+                f"INSERT INTO invoices (project_id, {cols}) "
+                f"VALUES (?, {marks})",
+                [project_id, *inv.values()],
+            )
+            conn.commit()
+            counters["invoices_created"] += 1
 
 
 # ---------------------------------------------------------------------------
@@ -610,10 +711,19 @@ def run_import(
             if result["outcome"] in (Outcome.CREATE, Outcome.UPDATE)
         ]
         all_invoices = [inv for row in ok_rows for inv in synthesize_invoices(row)]
+        # Dry-run client count uses the SAME identity key ensure_client
+        # matches on, so the preview equals what --commit creates.
         distinct_clients = {
             ident for row in ok_rows
             if (ident := client_identity(row)) is not None
         }
+        # Negative dollar values are silently dropped by synthesize_invoices
+        # (no invoice is created) — surface them instead of hiding them.
+        negative_jobs = [
+            row.get("job_number") or "?" for row in ok_rows
+            if (row.get("amount_paid") or 0) < 0
+            or (row.get("outstanding_balance") or 0) < 0
+        ]
         report["summary"]["financial_synthesis"] = {
             "enabled": {"invoices": synthesize_financials, "clients": create_clients},
             "invoices_planned": len(all_invoices) if synthesize_financials else 0,
@@ -624,6 +734,8 @@ def run_import(
                 i["amount"] for i in all_invoices if i["status"] == "sent"
             ), 2) if synthesize_financials else 0,
             "distinct_clients": len(distinct_clients) if create_clients else 0,
+            "negative_value_rows": len(negative_jobs),
+            "negative_value_jobs": negative_jobs,
         }
 
     print_summary(report)
@@ -640,13 +752,28 @@ def run_import(
                 synthesize_financials=synthesize_financials,
                 create_clients=create_clients,
             )
+            report["summary"]["commit_counters"] = counters
             print(f"\nCommitted {creates} creates + {updates} updates to database.")
             if synthesize_financials or create_clients:
                 print(
                     f"Synthesized {counters['invoices_created']} invoices; "
                     f"created {counters['clients_created']} clients; "
-                    f"linked {counters['clients_linked']} projects to clients."
+                    f"linked {counters['clients_linked']} projects to clients; "
+                    f"stale_invoices: {counters['stale_invoices']}."
                 )
+                if counters["stale_invoices"]:
+                    print(
+                        "NOTE: stale synthesized invoices were NOT updated "
+                        "(amounts are never auto-refreshed — a changed amount "
+                        "could clobber a hand-edited invoice). To refresh from "
+                        "the tracker: DELETE FROM invoices WHERE invoice_number "
+                        "LIKE '%-L_' then re-run with --commit "
+                        "--synthesize-financials."
+                    )
+            if counters["row_errors"]:
+                print(f"\nROW ERRORS ({len(counters['row_errors'])} — skipped, run continued):")
+                for e in counters["row_errors"]:
+                    print(f"  Row {e['row']}: [{e['job_number']}] — {e['error']}")
         else:
             print("\nNothing to commit.")
     else:
@@ -669,7 +796,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--dry-run", action="store_true", default=True, dest="dry_run",
-        help="Preview changes without writing (this is the default)",
+        help="Preview changes without writing project/invoice/client rows "
+             "(this is the default). Note: opening the DB still performs "
+             "ensure_db()'s idempotent seed/migration writes.",
     )
     parser.add_argument(
         "--commit", action="store_true", default=False,
