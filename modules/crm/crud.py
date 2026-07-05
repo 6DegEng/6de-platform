@@ -143,6 +143,18 @@ def get_opportunity(conn: sqlite3.Connection, opp_id: int) -> sqlite3.Row | None
     ).fetchone()
 
 
+def _validate_stage_exists(conn: sqlite3.Connection, stage: str) -> None:
+    """App-layer replacement for the retired DB CHECK on opportunities.stage.
+
+    Raises ``ValueError`` for a stage key that is neither built-in nor
+    present in the crm_stages config table.
+    """
+    if stage in STAGES:
+        return
+    if stage_config.get_stage_by_key(conn, stage) is None:
+        raise ValueError(f"Unknown stage '{stage}'")
+
+
 def create_opportunity(conn: sqlite3.Connection, name: str, **kwargs: Any) -> int:
     """Insert a new opportunity and return its id. Logs activity."""
     now = _now()
@@ -150,6 +162,8 @@ def create_opportunity(conn: sqlite3.Connection, name: str, **kwargs: Any) -> in
     for k, v in kwargs.items():
         if k in _OPP_ALLOWED_COLS and v is not None and v != "":
             fields[k] = v
+    if "stage" in fields:
+        _validate_stage_exists(conn, fields["stage"])
 
     columns = ", ".join(fields.keys())
     placeholders = ", ".join("?" for _ in fields)
@@ -169,6 +183,8 @@ def update_opportunity(conn: sqlite3.Connection, opp_id: int, **kwargs: Any) -> 
     filtered = {k: v for k, v in kwargs.items() if k in _OPP_ALLOWED_COLS}
     if not filtered:
         return
+    if "stage" in filtered:
+        _validate_stage_exists(conn, filtered["stage"])
     filtered["updated_at"] = _now()
     set_clause = ", ".join(f"{col} = ?" for col in filtered)
     values = list(filtered.values()) + [opp_id]
@@ -179,15 +195,23 @@ def update_opportunity(conn: sqlite3.Connection, opp_id: int, **kwargs: Any) -> 
     conn.commit()
 
 
-def allowed_next_stages(conn: sqlite3.Connection, current_stage: str) -> list[str]:
+def allowed_next_stages(
+    conn: sqlite3.Connection,
+    current_stage: str,
+    active_keys: list[str] | None = None,
+) -> list[str]:
     """Stage keys an opportunity in *current_stage* may move to.
 
     Built-in stages keep the original forward-transition rules. Custom
     (user-added) stages are freely reachable from any stage and can move
     anywhere — a small firm doesn't need a transition matrix for its own
     columns. Inactive stages are never offered.
+
+    Pass ``active_keys`` (ordered active stage keys) when the caller already
+    loaded the stage config, to avoid a per-call query.
     """
-    active_keys = [r["key"] for r in stage_config.list_stages(conn)]
+    if active_keys is None:
+        active_keys = [r["key"] for r in stage_config.list_stages(conn)]
     if not active_keys:
         active_keys = list(STAGES)
     custom_keys = [k for k in active_keys if k not in STAGES]
@@ -300,7 +324,7 @@ def convert_to_project(conn: sqlite3.Connection, opp_id: int) -> int:
     opp = get_opportunity(conn, opp_id)
     if opp is None:
         raise ValueError(f"Opportunity {opp_id} not found")
-    if opp["stage"] != "won":
+    if opp["stage"] not in stage_config.won_stage_keys(conn):
         raise ValueError(
             f"Only 'won' opportunities can be converted. Current stage: '{opp['stage']}'"
         )

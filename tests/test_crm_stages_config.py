@@ -17,12 +17,14 @@ from modules.crm.crud import (
     STAGES,
     advance_stage,
     allowed_next_stages,
+    convert_to_project,
     count_active_opportunities,
     create_opportunity,
     get_opportunity,
     get_pipeline_summary,
     get_win_loss_stats,
     list_opportunities,
+    update_opportunity,
 )
 from modules.crm.stages import (
     DEFAULT_STAGES,
@@ -214,3 +216,39 @@ def test_create_opportunity_defaults_unchanged(db):
     opp = get_opportunity(db, oid)
     assert opp["stage"] == "lead"
     assert opp["probability"] == 50
+
+
+def test_create_and_update_reject_unknown_stage(db):
+    """App-layer validation replaces the retired DB CHECK on stage."""
+    with pytest.raises(ValueError):
+        create_opportunity(db, "bad-stage", stage="not_a_stage")
+
+    oid = create_opportunity(db, "ok", stage="lead")
+    with pytest.raises(ValueError):
+        update_opportunity(db, oid, stage="not_a_stage")
+    # Known custom stage passes.
+    create_stage(db, "Site Visit", kind="open")
+    update_opportunity(db, oid, stage="site_visit")
+    assert get_opportunity(db, oid)["stage"] == "site_visit"
+
+
+def test_convert_to_project_accepts_custom_won_stage(db):
+    """The Convert button shows for any won-flagged stage — conversion
+    must accept those stages too, not just the literal 'won' key."""
+    create_stage(db, "Awarded", probability=100, kind="won")
+    oid = _insert_opp(db, "awarded-opp", "lead", value=4000)
+    advance_stage(db, oid, "awarded")
+
+    project_id = convert_to_project(db, oid)
+    row = db.execute(
+        "SELECT * FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    assert row is not None
+    assert get_opportunity(db, oid)["project_id"] == project_id
+
+
+def test_allowed_next_stages_accepts_preloaded_keys(db):
+    """The page passes its already-loaded stage keys to skip a query."""
+    keys = [r["key"] for r in list_stages(db)]
+    assert allowed_next_stages(db, "lead", active_keys=keys) == \
+        allowed_next_stages(db, "lead")

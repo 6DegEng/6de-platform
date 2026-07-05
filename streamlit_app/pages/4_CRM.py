@@ -419,7 +419,9 @@ with tab_pipeline:
                     # ---- Action buttons ----
                     action_col1, action_col2 = st.columns(2)
 
-                    next_stages = allowed_next_stages(conn, opp_stage)
+                    next_stages = allowed_next_stages(
+                        conn, opp_stage, active_keys=ACTIVE_STAGE_KEYS
+                    )
                     move_targets = [
                         s for s in next_stages if not _stage_flag(s, "is_lost")
                     ]
@@ -508,6 +510,13 @@ with tab_pipeline:
                                     st.rerun()
                                 except ValueError as e:
                                     st.error(str(e))
+                                except sqlite3.IntegrityError:
+                                    st.error(
+                                        "This database still enforces the "
+                                        "original seven stages, so custom "
+                                        "stages can hold no opportunities "
+                                        "here yet."
+                                    )
 
                     st.markdown("---")
 
