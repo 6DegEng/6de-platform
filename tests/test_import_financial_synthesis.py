@@ -19,11 +19,14 @@ _PLATFORM_ROOT = Path(__file__).resolve().parents[1]
 if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
+import pytest  # noqa: E402
+
 from scripts.import_legacy_xlsx import (  # noqa: E402
     Outcome,
     client_identity,
     commit_rows,
     ensure_client,
+    run_import,
     synthesize_invoices,
 )
 
@@ -88,22 +91,36 @@ class TestClients:
         assert a == b
 
     def test_ensure_client_creates_then_reuses(self, db):
-        cid1 = ensure_client(db, "Acme Corp", "Jane Doe")
-        cid2 = ensure_client(db, "ACME CORP", "jane doe")
+        cid1, created1 = ensure_client(db, "Acme Corp", "Jane Doe")
+        cid2, created2 = ensure_client(db, "ACME CORP", "jane doe")
         assert cid1 == cid2
+        assert created1 is True and created2 is False
         row = db.execute("SELECT name, company FROM clients WHERE id = ?", (cid1,)).fetchone()
         assert row["name"] == "Jane Doe"
         assert row["company"] == "Acme Corp"
         assert db.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"] == 1
 
     def test_ensure_client_company_only(self, db):
-        cid = ensure_client(db, "Solo LLC", None)
+        cid, created = ensure_client(db, "Solo LLC", None)
+        assert created is True
         row = db.execute("SELECT name FROM clients WHERE id = ?", (cid,)).fetchone()
         assert row["name"] == "Solo LLC"
 
     def test_ensure_client_nothing_returns_none(self, db):
         assert ensure_client(db, None, None) is None
         assert ensure_client(db, " ", "") is None
+
+    def test_whitespace_variants_dedupe_to_one_client(self, db):
+        # Internal whitespace is collapsed for identity — one client only.
+        cid1, created1 = ensure_client(db, "Acme  Corp", "Jane   Doe")
+        cid2, created2 = ensure_client(db, " Acme Corp ", "Jane Doe")
+        assert cid1 == cid2
+        assert created1 is True and created2 is False
+        assert db.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"] == 1
+        # ...and the dry-run identity agrees with ensure_client's key.
+        a = client_identity({"_client_company": "Acme  Corp", "_client_contact": "Jane   Doe"})
+        b = client_identity({"_client_company": "Acme Corp", "_client_contact": "Jane Doe"})
+        assert a == b
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +141,10 @@ class TestCommitSynthesis:
             [_row("260101", "A", amount_paid=100.0, _client_company="Acme")],
             conn=db,
         )
-        assert counters == {"invoices_created": 0, "clients_created": 0, "clients_linked": 0}
+        assert counters == {
+            "invoices_created": 0, "clients_created": 0, "clients_linked": 0,
+            "stale_invoices": 0, "row_errors": [],
+        }
         assert db.execute("SELECT COUNT(*) AS c FROM invoices").fetchone()["c"] == 0
         assert db.execute("SELECT COUNT(*) AS c FROM clients").fetchone()["c"] == 0
 
@@ -185,7 +205,7 @@ class TestCommitSynthesis:
 
     def test_existing_client_link_not_overwritten(self, db):
         from modules.projects.crud import create_project
-        other = ensure_client(db, "Original LLC", None)
+        other, _ = ensure_client(db, "Original LLC", None)
         create_project(db, name="A", job_number="260101", client_id=other)
         commit_rows(
             [_result("260101", "A", outcome=Outcome.UPDATE)],
@@ -197,3 +217,168 @@ class TestCommitSynthesis:
             "SELECT client_id FROM projects WHERE job_number = '260101'"
         ).fetchone()
         assert row["client_id"] == other  # only fills NULL, never overwrites
+
+    def test_stale_synthesized_invoice_skipped_not_updated(self, db, capsys):
+        # First commit synthesizes 260101-L1 at $100.
+        c1 = commit_rows(
+            [_result("260101", "A")],
+            [_row("260101", "A", amount_paid=100.0)],
+            conn=db, synthesize_financials=True,
+        )
+        assert c1["invoices_created"] == 1
+        # Tracker amount changes; re-run must NOT auto-update the invoice.
+        c2 = commit_rows(
+            [_result("260101", "A", outcome=Outcome.UPDATE)],
+            [_row("260101", "A", amount_paid=150.0)],
+            conn=db, synthesize_financials=True,
+        )
+        assert c2["invoices_created"] == 0
+        assert c2["stale_invoices"] == 1
+        out = capsys.readouterr().out
+        assert "SKIPPED-STALE 260101-L1" in out
+        amount = db.execute(
+            "SELECT amount FROM invoices WHERE invoice_number = '260101-L1'"
+        ).fetchone()["amount"]
+        assert amount == 100.0  # DB amount unchanged
+
+    def test_hand_edited_invoice_not_flagged_stale(self, db):
+        commit_rows(
+            [_result("260101", "A")],
+            [_row("260101", "A", amount_paid=100.0)],
+            conn=db, synthesize_financials=True,
+        )
+        # Simulate a hand-edited invoice (synth marker removed from notes).
+        db.execute(
+            "UPDATE invoices SET amount = 999.0, notes = 'manually adjusted' "
+            "WHERE invoice_number = '260101-L1'"
+        )
+        db.commit()
+        c2 = commit_rows(
+            [_result("260101", "A", outcome=Outcome.UPDATE)],
+            [_row("260101", "A", amount_paid=100.0)],
+            conn=db, synthesize_financials=True,
+        )
+        assert c2["stale_invoices"] == 0  # only OUR synthesized rows count
+
+    def test_one_bad_row_does_not_kill_the_run(self, db, capsys):
+        from modules.projects.crud import create_project
+        # completed -> on_hold is an invalid workflow transition.
+        create_project(db, name="Done", job_number="260101", status="completed")
+        counters = commit_rows(
+            [
+                _result("260101", "Done", outcome=Outcome.UPDATE),
+                _result("260202", "Good"),
+            ],
+            [
+                _row("260101", "Done", status="on_hold"),
+                _row("260202", "Good", amount_paid=50.0),
+            ],
+            conn=db, synthesize_financials=True,
+        )
+        # The bad row is recorded and the good row still lands.
+        assert len(counters["row_errors"]) == 1
+        assert counters["row_errors"][0]["job_number"] == "260101"
+        assert "InvalidStatusTransition" in counters["row_errors"][0]["error"]
+        assert "ERROR (row" in capsys.readouterr().out
+        assert counters["invoices_created"] == 1
+        assert db.execute(
+            "SELECT COUNT(*) AS c FROM projects WHERE job_number = '260202'"
+        ).fetchone()["c"] == 1
+
+
+# ---------------------------------------------------------------------------
+# run_import end-to-end (real xlsx, isolated default DB)
+# ---------------------------------------------------------------------------
+_TRACKER_HEADERS = [
+    "Project No", "Project Description / Address", "Project Status",
+    "Date Opened", "Amount Paid ($)", "Outstanding Balance ($)",
+    "Company / Client", "Contact",
+]
+
+
+def _make_tracker(path, rows):
+    """Write a minimal legacy-tracker xlsx (headers on row 3, per the map)."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Projects"
+    for ci, header in enumerate(_TRACKER_HEADERS, start=1):
+        ws.cell(row=3, column=ci, value=header)
+    for ri, row in enumerate(rows, start=4):
+        for ci, value in enumerate(row, start=1):
+            ws.cell(row=ri, column=ci, value=value)
+    wb.save(path)
+
+
+@pytest.fixture()
+def isolated_default_db(tmp_path, monkeypatch):
+    """Point ensure_db()'s default connection at a throwaway DB.
+
+    run_import uses ensure_db() internally (no conn parameter), so redirect
+    db.DB_PATH/config.DB_PATH to tmp and clear the cache so nothing here can
+    touch the real dev database (sqlite file or pg 'public' schema).
+    """
+    import config as config_mod
+
+    import db as db_mod
+
+    db_path = tmp_path / "import_e2e.db"
+    monkeypatch.setenv("PLATFORM_DB_PATH", str(db_path))
+    monkeypatch.setattr(db_mod, "DB_PATH", db_path)
+    monkeypatch.setattr(config_mod, "DB_PATH", db_path)
+    monkeypatch.setattr(db_mod, "LEGACY_DB_PATH", tmp_path / "no_legacy.db")
+    if hasattr(db_mod.ensure_db, "clear"):
+        db_mod.ensure_db.clear()
+    yield db_mod
+    if hasattr(db_mod.ensure_db, "clear"):
+        db_mod.ensure_db.clear()
+
+
+def _table_counts(conn) -> dict[str, int]:
+    return {
+        t: conn.execute(f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"]
+        for t in ("projects", "invoices", "clients")
+    }
+
+
+class TestRunImportDryRun:
+    def test_dry_run_writes_no_rows(self, isolated_default_db, tmp_path):
+        _make_tracker(tmp_path / "t.xlsx", [
+            ("260901", "Test A", "Active", "2026-01-01", 1000.0, 500.0, "Acme Corp", "Jane"),
+            ("260902", "Test B", "Active", None, 250.0, 0.0, "Beta LLC", None),
+        ])
+        conn = isolated_default_db.ensure_db()  # seeds happen up front
+        before = _table_counts(conn)
+        report = run_import(
+            tmp_path / "t.xlsx", sheet_name="Projects", commit=False,
+            synthesize_financials=True, create_clients=True,
+        )
+        after = _table_counts(conn)
+        assert after == before  # dry-run wrote no project/invoice/client rows
+        fs = report["summary"]["financial_synthesis"]
+        assert fs["invoices_planned"] == 3  # L1+L2 for A, L1 for B
+        assert fs["paid_total"] == 1250.0
+        assert fs["outstanding_total"] == 500.0
+        assert fs["distinct_clients"] == 2
+
+    def test_negative_amount_counted_and_makes_no_invoice(
+        self, isolated_default_db, tmp_path, capsys,
+    ):
+        _make_tracker(tmp_path / "neg.xlsx", [
+            ("260903", "Refund Job", "Active", None, -50.0, 200.0, None, None),
+        ])
+        report = run_import(
+            tmp_path / "neg.xlsx", sheet_name="Projects", commit=False,
+            synthesize_financials=True,
+        )
+        fs = report["summary"]["financial_synthesis"]
+        assert fs["negative_value_rows"] == 1
+        assert fs["negative_value_jobs"] == ["260903"]
+        assert fs["invoices_planned"] == 1  # only the L2 outstanding invoice
+        assert fs["paid_total"] == 0  # the negative paid produced NO invoice
+        assert "NEGATIVE" in capsys.readouterr().out
+        # Pure function agrees: negative amounts never make an invoice.
+        assert synthesize_invoices(
+            {"job_number": "260903", "amount_paid": -50.0}
+        ) == []
