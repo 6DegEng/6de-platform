@@ -216,40 +216,80 @@ def create_fee_entry(
 
 
 # ---------------------------------------------------------------------------
+# Internal (non-billable) codes
+# ---------------------------------------------------------------------------
+
+def list_internal_codes(
+    conn: sqlite3.Connection, active_only: bool = True
+) -> list[sqlite3.Row]:
+    """Return internal_codes rows ordered by code."""
+    sql = "SELECT * FROM internal_codes"
+    if active_only:
+        sql += " WHERE is_active = 1"
+    sql += " ORDER BY code"
+    return conn.execute(sql).fetchall()
+
+
+# ---------------------------------------------------------------------------
 # Time Entries — CRUD
 # ---------------------------------------------------------------------------
 
 def create_time_entry(
     conn: sqlite3.Connection,
     employee_id: int,
-    project_id: int,
-    entry_date: str,
-    hours: float,
-    role: str,
+    project_id: int | None = None,
+    entry_date: str | None = None,
+    hours: float | None = None,
+    role: str | None = None,
     **kwargs: Any,
 ) -> int:
     """Create a new time entry with auto-looked-up rate.
 
+    An entry books either project time (``project_id``) or internal time
+    (``internal_code`` kwarg) — exactly one. Internal time is non-billable
+    by definition: ``billable`` is forced to 0.
+
     The rate is snapshotted from fee_schedule at creation time unless
     explicitly provided via kwargs['rate'].
     """
+    internal_code = kwargs.pop("internal_code", None)
+    if (project_id is None) == (internal_code is None):
+        raise ValueError(
+            "Provide exactly one of project_id (project time) or "
+            "internal_code (internal, non-billable time)"
+        )
+    if entry_date is None or hours is None or role is None:
+        raise ValueError("entry_date, hours and role are required")
+
+    if internal_code is not None:
+        code_row = conn.execute(
+            "SELECT is_active FROM internal_codes WHERE code = ?",
+            (internal_code,),
+        ).fetchone()
+        if code_row is None:
+            raise ValueError(f"Unknown internal code '{internal_code}'")
+        if not code_row["is_active"]:
+            raise ValueError(f"Internal code '{internal_code}' is inactive")
+        billable = 0  # internal time is non-billable by definition
+    else:
+        billable = kwargs.get("billable", 1)
+
     rate = kwargs.pop("rate", None)
     if rate is None:
         rate = get_current_rate(conn, role)
 
     multiplier = kwargs.get("multiplier", 1.0)
-    billable = kwargs.get("billable", 1)
     description = kwargs.get("description", None)
     invoice_id = kwargs.get("invoice_id", None)
 
     cur = conn.execute(
         "INSERT INTO time_entries "
-        "(employee_id, project_id, entry_date, hours, role, rate, "
-        " multiplier, billable, description, invoice_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(employee_id, project_id, internal_code, entry_date, hours, role, "
+        " rate, multiplier, billable, description, invoice_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            employee_id, project_id, entry_date, hours, role, rate,
-            multiplier, billable, description, invoice_id,
+            employee_id, project_id, internal_code, entry_date, hours, role,
+            rate, multiplier, billable, description, invoice_id,
         ),
     )
     entry_id = cur.lastrowid
@@ -261,6 +301,7 @@ def create_time_entry(
         {
             "employee_id": employee_id,
             "project_id": project_id,
+            "internal_code": internal_code,
             "entry_date": entry_date,
             "hours": hours,
             "role": role,
@@ -306,12 +347,23 @@ def list_time_entries(
     date_to: str | None = None,
     unbilled_only: bool = False,
 ) -> list[sqlite3.Row]:
-    """Return time entries with optional filters, joined with employee/project."""
+    """Return time entries with optional filters, joined with employee/project.
+
+    Internal (non-billable) rows carry their code + description: use
+    ``ref_code`` / ``ref_name`` for display — they fall back from the
+    project's job_number/name to the internal code/description.
+    """
     sql = (
-        "SELECT te.*, e.name AS employee_name, p.job_number, p.name AS project_name "
+        "SELECT te.*, e.name AS employee_name, "
+        "  p.job_number, p.name AS project_name, "
+        "  ic.category AS internal_category, "
+        "  ic.description AS internal_description, "
+        "  COALESCE(p.job_number, te.internal_code) AS ref_code, "
+        "  COALESCE(p.name, ic.description) AS ref_name "
         "FROM time_entries te "
         "JOIN employees e ON e.id = te.employee_id "
-        "JOIN projects p ON p.id = te.project_id "
+        "LEFT JOIN projects p ON p.id = te.project_id "
+        "LEFT JOIN internal_codes ic ON ic.code = te.internal_code "
         "WHERE 1=1"
     )
     params: list[Any] = []
@@ -349,12 +401,18 @@ def get_weekly_timesheet(
         ws = date.today()
     week_end = (ws + timedelta(days=6)).isoformat()
     sql = (
-        "SELECT te.*, e.name AS employee_name, p.job_number, p.name AS project_name "
+        "SELECT te.*, e.name AS employee_name, "
+        "  p.job_number, p.name AS project_name, "
+        "  ic.category AS internal_category, "
+        "  ic.description AS internal_description, "
+        "  COALESCE(p.job_number, te.internal_code) AS ref_code, "
+        "  COALESCE(p.name, ic.description) AS ref_name "
         "FROM time_entries te "
         "JOIN employees e ON e.id = te.employee_id "
-        "JOIN projects p ON p.id = te.project_id "
+        "LEFT JOIN projects p ON p.id = te.project_id "
+        "LEFT JOIN internal_codes ic ON ic.code = te.internal_code "
         "WHERE te.employee_id = ? AND te.entry_date >= ? AND te.entry_date <= ? "
-        "ORDER BY te.entry_date, p.job_number"
+        "ORDER BY te.entry_date, COALESCE(p.job_number, te.internal_code)"
     )
     return conn.execute(sql, (employee_id, week_start_date, week_end)).fetchall()
 
@@ -374,15 +432,20 @@ def get_utilization_report(
                 {
                     "employee_id": ..., "name": ..., "role": ...,
                     "total_hours": ..., "billable_hours": ...,
-                    "utilization_pct": ..., "billable_amount": ...
+                    "utilization_pct": ..., "billable_amount": ...,
+                    "capacity_hours": ...
                 },
                 ...
             ],
             "totals": {
                 "total_hours": ..., "billable_hours": ...,
-                "utilization_pct": ..., "billable_amount": ...
+                "utilization_pct": ..., "billable_amount": ...,
+                "capacity_hours": ...
             }
         }
+
+    ``capacity_hours`` = the employee's resource-calendar hours_per_week
+    prorated over the period (falls back to 40 h/week without a calendar).
     """
     rows = conn.execute(
         "SELECT e.id AS employee_id, e.name, e.role, "
@@ -402,15 +465,37 @@ def get_utilization_report(
         (date_from, date_to),
     ).fetchall()
 
+    # Capacity: latest resource_calendars row effective on/before date_to
+    # per employee (or the earliest row if all are in the future).
+    calendars: dict[int, float] = {}
+    for cal in conn.execute(
+        "SELECT employee_id, hours_per_week, effective_date "
+        "FROM resource_calendars ORDER BY effective_date"
+    ).fetchall():
+        eid = cal["employee_id"]
+        if str(cal["effective_date"]) <= date_to or eid not in calendars:
+            calendars[eid] = float(cal["hours_per_week"])
+    try:
+        period_days = (
+            datetime.strptime(date_to, "%Y-%m-%d").date()
+            - datetime.strptime(date_from, "%Y-%m-%d").date()
+        ).days + 1
+    except ValueError:
+        period_days = 7
+    period_days = max(period_days, 0)
+
     employees = []
     grand_total = 0.0
     grand_billable = 0.0
     grand_amount = 0.0
+    grand_capacity = 0.0
     for r in rows:
         total_h = float(r["total_hours"])
         bill_h = float(r["billable_hours"])
         bill_amt = float(r["billable_amount"])
         util_pct = (bill_h / total_h * 100.0) if total_h > 0 else 0.0
+        hours_per_week = calendars.get(r["employee_id"], 40.0)
+        capacity = round(hours_per_week * period_days / 7.0, 2)
         employees.append({
             "employee_id": r["employee_id"],
             "name": r["name"],
@@ -419,10 +504,12 @@ def get_utilization_report(
             "billable_hours": round(bill_h, 2),
             "utilization_pct": round(util_pct, 1),
             "billable_amount": round(bill_amt, 2),
+            "capacity_hours": capacity,
         })
         grand_total += total_h
         grand_billable += bill_h
         grand_amount += bill_amt
+        grand_capacity += capacity
 
     grand_util = (grand_billable / grand_total * 100.0) if grand_total > 0 else 0.0
 
@@ -434,6 +521,7 @@ def get_utilization_report(
             "billable_hours": round(grand_billable, 2),
             "utilization_pct": round(grand_util, 1),
             "billable_amount": round(grand_amount, 2),
+            "capacity_hours": round(grand_capacity, 2),
         },
     }
 

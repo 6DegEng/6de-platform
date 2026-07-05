@@ -359,9 +359,135 @@ def _expand_project_status_check(conn: sqlite3.Connection) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Timesheets parity — time_entries gains internal (non-billable) time:
+# project_id becomes nullable, internal_code TEXT REFERENCES internal_codes,
+# and a CHECK enforces exactly one of the two. SQLite cannot ALTER NOT NULL
+# or add a table CHECK, so we rebuild the table; Postgres uses ALTERs.
+# Must run BEFORE schema.sql is (re)applied: the updated v_weekly_timesheet
+# view references te.internal_code, which has to exist first on Postgres.
+# ---------------------------------------------------------------------------
+_TIME_ENTRY_COLUMNS = (
+    "id, employee_id, project_id, entry_date, hours, role, rate, "
+    "multiplier, billable, description, invoice_id, created_at, updated_at"
+)
+
+_INTERNAL_CODES_DDL = (
+    "CREATE TABLE IF NOT EXISTS internal_codes ("
+    "  code        TEXT    PRIMARY KEY,"
+    "  category    TEXT    NOT NULL,"
+    "  description TEXT    NOT NULL,"
+    "  is_active   INTEGER NOT NULL DEFAULT 1"
+    ")"
+)
+
+
+def _migrate_time_entries_internal(conn: sqlite3.Connection) -> None:
+    """Upgrade an existing time_entries table to the internal-code shape.
+
+    Idempotent: no-ops when the table doesn't exist yet (fresh install —
+    schema.sql creates the new shape) or already has internal_code.
+    """
+    # internal_codes must exist first (FK target). Seeds live in schema.sql.
+    conn.execute(_INTERNAL_CODES_DDL)
+
+    exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='time_entries'"
+    ).fetchone()
+    if exists is None:
+        return
+    cols = conn.execute("PRAGMA table_info(time_entries)").fetchall()
+    has_internal = any(c["name"] == "internal_code" for c in cols)
+
+    if _is_postgres():
+        if not has_internal:
+            conn.execute(
+                "ALTER TABLE time_entries ALTER COLUMN project_id DROP NOT NULL"
+            )
+            conn.execute(
+                "ALTER TABLE time_entries "
+                "ADD COLUMN internal_code TEXT REFERENCES internal_codes(code)"
+            )
+        constraint = conn.execute(
+            "SELECT 1 FROM information_schema.table_constraints "
+            "WHERE table_schema = current_schema() "
+            "  AND table_name = 'time_entries' "
+            "  AND constraint_name = 'time_entries_project_xor_internal'"
+        ).fetchone()
+        if constraint is None:
+            conn.execute(
+                "ALTER TABLE time_entries "
+                "ADD CONSTRAINT time_entries_project_xor_internal "
+                "CHECK ((project_id IS NULL) <> (internal_code IS NULL))"
+            )
+        return
+
+    if has_internal:
+        return
+
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("PRAGMA legacy_alter_table=ON")
+    conn.execute("BEGIN")
+    try:
+        conn.execute(
+            "CREATE TABLE time_entries_new ("
+            "  id              INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  employee_id     INTEGER NOT NULL REFERENCES employees(id),"
+            "  project_id      INTEGER REFERENCES projects(id),"
+            "  internal_code   TEXT    REFERENCES internal_codes(code),"
+            "  entry_date      TEXT    NOT NULL,"
+            "  hours           REAL    NOT NULL CHECK (hours > 0),"
+            "  role            TEXT    NOT NULL,"
+            "  rate            REAL    NOT NULL,"
+            "  multiplier      REAL    NOT NULL DEFAULT 1.0,"
+            "  billable        INTEGER NOT NULL DEFAULT 1,"
+            "  description     TEXT,"
+            "  invoice_id      INTEGER REFERENCES invoices(id),"
+            "  created_at      TEXT    NOT NULL DEFAULT (datetime('now')),"
+            "  updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),"
+            "  CONSTRAINT time_entries_project_xor_internal"
+            "      CHECK ((project_id IS NULL) <> (internal_code IS NULL))"
+            ")"
+        )
+        conn.execute(
+            f"INSERT INTO time_entries_new ({_TIME_ENTRY_COLUMNS}) "
+            f"SELECT {_TIME_ENTRY_COLUMNS} FROM time_entries"
+        )
+        conn.execute("DROP TABLE time_entries")
+        conn.execute("ALTER TABLE time_entries_new RENAME TO time_entries")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_time_entries_project "
+            "ON time_entries(project_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_time_entries_employee "
+            "ON time_entries(employee_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_time_entries_date "
+            "ON time_entries(entry_date)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_time_entries_invoice "
+            "ON time_entries(invoice_id)"
+        )
+        # The updated v_weekly_timesheet (LEFT JOINs + internal codes) is in
+        # schema.sql, but CREATE VIEW IF NOT EXISTS would keep the old one —
+        # drop it so the executescript pass recreates the new definition.
+        conn.execute("DROP VIEW IF EXISTS v_weekly_timesheet")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA legacy_alter_table=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Apply the schema.sql DDL + the ALTER COLUMN list. Called only when
     the stored fingerprint doesn't match the current code state."""
+    _migrate_time_entries_internal(conn)
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
     _ensure_meta_table(conn)
     _apply_alter_columns(conn)
@@ -413,6 +539,19 @@ def seed_juan_as_employee(conn: sqlite3.Connection) -> None:
         entity_id=1,
         action="seeded",
         details={"source": "db.seed_juan_as_employee", "reason": "B7/I2 fix"},
+    )
+
+
+def seed_resource_calendars(conn: sqlite3.Connection) -> None:
+    """Give every employee without a resource calendar a 40 h/week default
+    row (hr-foundation remainder, docs/audit/03_decisions.md). Idempotent."""
+    conn.execute(
+        "INSERT INTO resource_calendars (employee_id, hours_per_week, effective_date) "
+        "SELECT e.id, 40, COALESCE(e.hire_date, '2026-01-01') "
+        "FROM employees e "
+        "WHERE NOT EXISTS ("
+        "  SELECT 1 FROM resource_calendars rc WHERE rc.employee_id = e.id"
+        ")"
     )
 
 
@@ -509,6 +648,7 @@ def init_db(db_path: Path | str | None = None) -> None:
     seed_rules_from_vba(conn)
     seed_required_checks(conn)
     seed_juan_as_employee(conn)
+    seed_resource_calendars(conn)
     bridge_proposals_to_opportunities(conn)
     conn.close()
 
@@ -533,6 +673,7 @@ def _ensure_db_impl() -> sqlite3.Connection:
 
     # Seeds are self-idempotent — cheap to call every time.
     seed_juan_as_employee(conn)
+    seed_resource_calendars(conn)
     bridge_proposals_to_opportunities(conn)
     return conn
 
