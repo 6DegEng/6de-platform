@@ -203,12 +203,37 @@ CREATE TABLE IF NOT EXISTS fee_schedule (
 );
 
 -- ============================================================
+-- INTERNAL CODES (non-billable time categories — mirrors the
+-- Internal_Codes sheet in the Excel timesheet system)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS internal_codes (
+    code            TEXT    PRIMARY KEY,
+    category        TEXT    NOT NULL,
+    description     TEXT    NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1
+);
+
+-- ============================================================
+-- RESOURCE CALENDARS (working-hours schedule per employee —
+-- hr-foundation remainder, docs/audit/03_decisions.md)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS resource_calendars (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id     INTEGER NOT NULL REFERENCES employees(id),
+    hours_per_week  REAL    NOT NULL DEFAULT 40,
+    effective_date  TEXT    NOT NULL
+);
+
+-- ============================================================
 -- TIME ENTRIES
+-- A row books either project time (project_id, billable) or
+-- internal time (internal_code, never billable) — exactly one.
 -- ============================================================
 CREATE TABLE IF NOT EXISTS time_entries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     employee_id     INTEGER NOT NULL REFERENCES employees(id),
-    project_id      INTEGER NOT NULL REFERENCES projects(id),
+    project_id      INTEGER REFERENCES projects(id),
+    internal_code   TEXT    REFERENCES internal_codes(code),
     entry_date      TEXT    NOT NULL,
     hours           REAL    NOT NULL CHECK (hours > 0),
     role            TEXT    NOT NULL,
@@ -218,7 +243,9 @@ CREATE TABLE IF NOT EXISTS time_entries (
     description     TEXT,
     invoice_id      INTEGER REFERENCES invoices(id),
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT time_entries_project_xor_internal
+        CHECK ((project_id IS NULL) <> (internal_code IS NULL))
 );
 
 -- ============================================================
@@ -499,6 +526,7 @@ CREATE INDEX IF NOT EXISTS idx_time_entries_project ON time_entries(project_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_employee ON time_entries(employee_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_date ON time_entries(entry_date);
 CREATE INDEX IF NOT EXISTS idx_time_entries_invoice ON time_entries(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_resource_calendars_employee ON resource_calendars(employee_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_project ON expenses(project_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
 CREATE INDEX IF NOT EXISTS idx_opportunities_stage ON opportunities(stage);
@@ -524,8 +552,8 @@ SELECT
     te.entry_date,
     strftime('%W', te.entry_date) AS week_number,
     strftime('%Y', te.entry_date) AS year,
-    p.job_number,
-    p.name AS project_name,
+    COALESCE(p.job_number, te.internal_code) AS job_number,
+    COALESCE(p.name, ic.description) AS project_name,
     te.role,
     te.hours,
     te.rate,
@@ -535,7 +563,8 @@ SELECT
     te.description
 FROM time_entries te
 JOIN employees e ON e.id = te.employee_id
-JOIN projects p ON p.id = te.project_id
+LEFT JOIN projects p ON p.id = te.project_id
+LEFT JOIN internal_codes ic ON ic.code = te.internal_code
 ORDER BY te.entry_date DESC, e.name;
 
 CREATE VIEW IF NOT EXISTS v_ar_aging AS
@@ -720,6 +749,31 @@ VALUES
     ('engineering_technician', 110.00, '2026-01-01', 'Engineering Technician'),
     ('cad_drafter',             80.00, '2026-01-01', 'CAD Drafter'),
     ('admin',                   65.00, '2026-01-01', 'Administrative/Clerical');
+
+-- ============================================================
+-- SEED DATA: Internal (non-billable) project codes — mirrors the
+-- Internal_Codes sheet in the Excel timesheet system
+-- ============================================================
+INSERT OR IGNORE INTO internal_codes (code, category, description)
+VALUES
+    ('001001', 'Admin',        'Accounting / Bookkeeping / QuickBooks'),
+    ('001002', 'Admin',        'Invoicing & Collections'),
+    ('001003', 'Admin',        'Insurance / Licensing / PE Renewal'),
+    ('001004', 'Admin',        'Office Management / Supplies / IT'),
+    ('001005', 'Admin',        'Legal / Contracts / Agreements'),
+    ('001006', 'Admin',        'Scheduling / Calendar Management'),
+    ('002001', 'Business Dev', 'Marketing / Website / Social Media / Content'),
+    ('002002', 'Business Dev', 'Proposals / Quotes / Fee Letters'),
+    ('002003', 'Business Dev', 'Business Planning / Strategy / Financial Review'),
+    ('002004', 'Business Dev', 'Sales Calls / Lead Follow-up'),
+    ('002005', 'Business Dev', 'Client Relationship Management'),
+    ('003001', 'Networking',   'Networking Events / Conferences / Meetups'),
+    ('003002', 'Networking',   'HGDW Coursework / Sessions'),
+    ('003003', 'Networking',   'CPD / Continuing Education / Training'),
+    ('003004', 'Networking',   'Industry Research / Code Updates / Standards'),
+    ('004001', 'Technology',   'AI / Automation Development'),
+    ('004002', 'Technology',   'Software Setup / IT Infrastructure'),
+    ('004003', 'Technology',   'Website Development / Maintenance');
 
 -- ============================================================
 -- Calc Package Auditor — required checks per structure type

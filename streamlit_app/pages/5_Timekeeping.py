@@ -39,8 +39,13 @@ from modules.timekeeping.crud import (  # noqa: E402
     list_employees,
     list_expenses,
     list_fee_schedule,
+    list_internal_codes,
     list_time_entries,
     update_employee,
+)
+from modules.timekeeping.export_xlsx import (  # noqa: E402
+    build_timesheet_workbook,
+    timesheet_filename,
 )
 from streamlit_app.auth import require_auth  # noqa: E402
 
@@ -169,10 +174,25 @@ employees = list_employees(conn, is_active=True)
 with tab_time:
     st.subheader("Log Time")
 
-    if not projects:
-        st.warning("No projects found. Create a project first.")
-    elif not employees:
+    internal_codes = list_internal_codes(conn)
+
+    # Toggle lives OUTSIDE the form so flipping it swaps the selector
+    # immediately (widgets inside a form don't rerun until submit).
+    te_internal_mode = st.toggle(
+        "Internal (non-billable)",
+        key="te_internal_mode",
+        help="Log time against an internal code (admin, business dev, "
+             "networking, technology) instead of a project. Internal time "
+             "is never billable.",
+    )
+
+    if not employees:
         st.warning("No active employees found. Add an employee in the Employees tab.")
+    elif not te_internal_mode and not projects:
+        st.warning("No projects found. Create a project first, or switch to "
+                   "Internal (non-billable).")
+    elif te_internal_mode and not internal_codes:
+        st.warning("No active internal codes found. Run the database seed.")
     else:
         with st.form("new_time_entry_form", clear_on_submit=True):
             row1_c1, row1_c2 = st.columns(2)
@@ -186,14 +206,27 @@ with tab_time:
                 key="te_employee",
             )
 
-            # Project selector
-            proj_options = {p["id"]: _project_label(p) for p in projects}
-            selected_proj_id = row1_c2.selectbox(
-                "Project",
-                options=list(proj_options.keys()),
-                format_func=lambda x: proj_options[x],
-                key="te_project",
-            )
+            selected_proj_id = None
+            selected_internal_code = None
+            if te_internal_mode:
+                code_options = {
+                    c["code"]: f'{c["code"]} — {c["category"]} / {c["description"]}'
+                    for c in internal_codes
+                }
+                selected_internal_code = row1_c2.selectbox(
+                    "Internal Code",
+                    options=list(code_options.keys()),
+                    format_func=lambda x: code_options[x],
+                    key="te_internal_code",
+                )
+            else:
+                proj_options = {p["id"]: _project_label(p) for p in projects}
+                selected_proj_id = row1_c2.selectbox(
+                    "Project",
+                    options=list(proj_options.keys()),
+                    format_func=lambda x: proj_options[x],
+                    key="te_project",
+                )
 
             row2_c1, row2_c2, row2_c3, row2_c4 = st.columns(4)
 
@@ -228,10 +261,15 @@ with tab_time:
                 "Description", placeholder="What did you work on?", key="te_desc",
             )
             te_after_hours = row3_c2.checkbox(
-                f"After-hours / Weekend ({AFTER_HOURS_MULTIPLIER}x)",
+                f"After-hours / OT ({AFTER_HOURS_MULTIPLIER}x)",
                 key="te_after_hours",
+                help="Outside 6AM-6PM M-F, weekends, holidays",
             )
-            te_billable = row3_c3.checkbox("Billable", value=True, key="te_billable")
+            if te_internal_mode:
+                te_billable = False
+                row3_c3.caption("Internal time is always non-billable.")
+            else:
+                te_billable = row3_c3.checkbox("Billable", value=True, key="te_billable")
 
             submitted = st.form_submit_button(
                 "Log Time Entry", type="primary", use_container_width=True
@@ -244,6 +282,7 @@ with tab_time:
                         conn,
                         employee_id=selected_emp_id,
                         project_id=selected_proj_id,
+                        internal_code=selected_internal_code,
                         entry_date=te_date.isoformat(),
                         hours=te_hours,
                         role=te_role,
@@ -297,7 +336,7 @@ with tab_time:
                 c1, c2, c3, c4, c5 = st.columns([3, 1.5, 1.5, 1.5, 1])
                 c1.markdown(
                     f"**{entry['employee_name']}** - "
-                    f"{entry['project_name']} ({entry['job_number']})"
+                    f"{entry['ref_name']} ({entry['ref_code']})"
                 )
                 c2.markdown(f"{entry['entry_date']}  |  **{entry['hours']:.2f} hrs**")
                 line_total = entry["hours"] * entry["rate"] * entry["multiplier"]
@@ -306,9 +345,13 @@ with tab_time:
                     f"{_fmt_currency(entry['rate'])}/hr{mult_label} = "
                     f"**{_fmt_currency(line_total)}**"
                 )
-                billable_badge = (
-                    ":green[Billable]" if entry["billable"] else ":gray[Non-billable]"
-                )
+                if entry["internal_code"]:
+                    billable_badge = ":violet[Internal]"
+                else:
+                    billable_badge = (
+                        ":green[Billable]" if entry["billable"]
+                        else ":gray[Non-billable]"
+                    )
                 invoiced_badge = (
                     ":blue[Invoiced]" if entry["invoice_id"] else ":orange[Unbilled]"
                 )
@@ -364,12 +407,27 @@ with tab_weekly:
     if wk_employee_id:
         entries = get_weekly_timesheet(conn, wk_employee_id, selected_monday.isoformat())
 
-        # Header showing the week
+        # Header showing the week + Excel-parity export
         selected_sunday = selected_monday + timedelta(days=6)
-        st.markdown(
+        hdr_c1, hdr_c2 = st.columns([3, 1])
+        hdr_c1.markdown(
             f"**Week:** {selected_monday.strftime('%b %d')} - "
             f"{selected_sunday.strftime('%b %d, %Y')}"
         )
+        try:
+            hdr_c2.download_button(
+                "Download Timesheet.xlsx",
+                data=build_timesheet_workbook(conn, wk_employee_id, selected_monday),
+                file_name=timesheet_filename(selected_monday),
+                mime="application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet",
+                key="wk_download",
+                use_container_width=True,
+                help="Weekly timesheet in the firm's Excel layout "
+                     "(Master_Time_Log compatible)",
+            )
+        except Exception as exc:  # noqa: BLE001
+            hdr_c2.error(f"Export failed: {exc}")
 
         if entries:
             # Group by day
@@ -408,7 +466,7 @@ with tab_weekly:
                                 f" x{e['multiplier']}" if e["multiplier"] != 1.0 else ""
                             )
                             st.markdown(
-                                f"- **{e['project_name']}** ({e['job_number']}) -- "
+                                f"- **{e['ref_name']}** ({e['ref_code']}) -- "
                                 f"{e['hours']:.2f} hrs @ "
                                 f"{_fmt_currency(e['rate'])}/hr{mult_label} = "
                                 f"{_fmt_currency(line_total)}"
@@ -447,11 +505,17 @@ with tab_weekly:
             if report["employees"]:
                 # Summary metrics
                 totals = report["totals"]
-                u_c1, u_c2, u_c3, u_c4 = st.columns(4)
+                u_c1, u_c2, u_c3, u_c4, u_c5 = st.columns(5)
                 u_c1.metric("Total Hours", _fmt_hours(totals["total_hours"]))
                 u_c2.metric("Billable Hours", _fmt_hours(totals["billable_hours"]))
-                u_c3.metric("Utilization", f"{totals['utilization_pct']:.1f}%")
-                u_c4.metric("Billable Amount", _fmt_currency(totals["billable_amount"]))
+                u_c3.metric(
+                    "Capacity",
+                    _fmt_hours(totals["capacity_hours"]),
+                    help="Hours available: resource-calendar hours/week "
+                         "prorated over the period",
+                )
+                u_c4.metric("Utilization", f"{totals['utilization_pct']:.1f}%")
+                u_c5.metric("Billable Amount", _fmt_currency(totals["billable_amount"]))
 
                 # Per-employee breakdown
                 for emp in report["employees"]:
@@ -463,7 +527,8 @@ with tab_weekly:
                             )
                             ec2.markdown(
                                 f"Total: {emp['total_hours']:.1f} hrs  |  "
-                                f"Billable: {emp['billable_hours']:.1f} hrs"
+                                f"Billable: {emp['billable_hours']:.1f} hrs  |  "
+                                f"Capacity: {emp['capacity_hours']:.1f} hrs"
                             )
                             ec3.markdown(f"Utilization: **{emp['utilization_pct']:.1f}%**")
                             ec4.markdown(f"Revenue: **{_fmt_currency(emp['billable_amount'])}**")

@@ -1,5 +1,34 @@
 # Changelog
 
+## Timesheets: Excel-system parity -- 2026-07-05
+
+Platform timekeeping now replaces the hand-filled weekly Excel timesheets
+without breaking the downstream Master_Time_Log builder. See docs/timesheets.md.
+
+### Schema (both backends)
+- New `internal_codes` table seeded with the firm's 18 non-billable codes
+  (001001 Admin/Accounting … 004003 Technology/Website).
+- `time_entries`: `project_id` now nullable, new `internal_code` FK, CHECK
+  enforcing exactly one of the two (SQLite table rebuild / Postgres ALTERs,
+  both idempotent and fingerprint-gated).
+- New `resource_calendars` table (40 h/week default seeded per employee);
+  the utilization report gains a prorated `capacity_hours` column.
+
+### Timekeeping module + UI
+- `create_time_entry` books project XOR internal time; internal entries are
+  forced non-billable. List/weekly queries LEFT JOIN projects + internal codes.
+- Log Time tab: "Internal (non-billable)" toggle swaps the project selectbox
+  for an internal-code selectbox; After-hours/OT checkbox = 1.5x multiplier.
+- Weekly tab: "Download Timesheet.xlsx" button exports the week in the exact
+  legacy layout (Time_Log headers row 5, entries row 6, literal values,
+  `Timesheet_<Monday>_to_<Sunday>.xlsx`).
+
+### Importer
+- `scripts/import_timesheets_xlsx.py`: dry-run-by-default importer for the
+  HR folder's weekly files; maps job numbers / internal codes / role labels /
+  OT flag, snapshots std rates (falls back to fee_schedule when the file
+  carries uncached formulas), idempotent on re-run.
+
 ## Hosting docs reconciled to Azure -- 2026-05-29
 
 Documentation-only pass. Reconciled stale Phase 8 hosting references from the
