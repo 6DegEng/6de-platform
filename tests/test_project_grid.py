@@ -202,3 +202,114 @@ def test_text_column_values_are_plain_text():
         assert "<span" not in val and "<div" not in val, (
             f"{col} cell value contains raw HTML: {val!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: "Minified React error #31" (fix/projects-grid-react-error-31).
+#
+# In streamlit-aggrid 1.2.x (AG Grid React v34) a *plain function*
+# cellRenderer is mounted as a React component. Returning a DOM element from
+# it makes React throw error #31 ("Objects are not valid as a React child
+# (found: [object HTMLSpanElement])") and the whole grid dies behind a
+# "Component Error" banner. The renderers must therefore be AG Grid JS
+# component CLASSES (init/getGui/refresh) — AG Grid instantiates those
+# outside React entirely. Reproduced + verified with 68 prod-shaped rows on
+# both backends via scripts/repro_grid_error31.py.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("name,builder", list(_HTML_RENDERER_BUILDERS.items()))
+def test_html_renderer_is_js_component_class(name, builder):
+    # .js_code wraps the source in ::JSCODE:: markers — strip them first.
+    js = builder().js_code.replace("::JSCODE::", "").strip()
+    assert re.match(r"^class\b", js), (
+        f"{name} renderer must be a JS component class — a bare function "
+        f"cellRenderer is mounted as a React component, and returning a DOM "
+        f"element from it throws React error #31 (kills the grid)"
+    )
+    assert "init(" in js and "getGui(" in js, (
+        f"{name} renderer class must implement init(params) and getGui()"
+    )
+    assert not re.match(r"^function\b", js), (
+        f"{name} renderer must not be a plain function"
+    )
+
+
+def test_grid_options_avoid_enterprise_only_features():
+    """We ship AG Grid community modules only (enable_enterprise_modules=False).
+
+    sideBar / rowGroupPanelShow / enableRowGroup / rowGroup are Enterprise
+    modules: they log AG Grid error #200 in the browser console and silently
+    do nothing. They must not appear in the grid options.
+    """
+    df = projects_to_dataframe(
+        [
+            {
+                "id": 1,
+                "job_number": "260101",
+                "name": "X",
+                "status": "active",
+                "priority": "high",
+                "percent_complete": 50,
+                "client_name": "Acme",
+                "action_by": "6DE",
+                "next_action": "Submit permit",
+                "address": "1 Main St",
+                "city": "Miami",
+                "county": "Miami-Dade",
+                "scope": "Reroof",
+                "contract_value": 1000,
+                "start_date": "2026-01-01",
+                "target_end_date": "2026-02-01",
+                "updated_at": "2026-01-01",
+                "notes": "n",
+            }
+        ]
+    )
+    for group_by_bucket in (False, True):
+        opts = _build_grid_options(df, group_by_bucket=group_by_bucket)
+        assert "sideBar" not in opts or not opts.get("sideBar")
+        assert "rowGroupPanelShow" not in opts
+        for col_def in opts["columnDefs"]:
+            assert not col_def.get("enableRowGroup"), (
+                f"{col_def.get('field')} sets enableRowGroup (enterprise-only)"
+            )
+            assert not col_def.get("rowGroup"), (
+                f"{col_def.get('field')} sets rowGroup (enterprise-only)"
+            )
+        # Stable row ids keep edit/selection round-trips consistent.
+        assert "getRowId" in opts
+
+
+def test_group_by_bucket_surfaces_sorted_bucket_column():
+    """Without enterprise grouping, the toggle unhides + pre-sorts the bucket
+    column so rows still cluster by lifecycle bucket."""
+    df = projects_to_dataframe(
+        [
+            {
+                "id": 1,
+                "job_number": "260101",
+                "name": "X",
+                "status": "active",
+                "priority": None,
+                "percent_complete": 0,
+                "client_name": "",
+                "action_by": "",
+                "next_action": "",
+                "address": "",
+                "city": "",
+                "county": "",
+                "scope": "",
+                "contract_value": None,
+                "start_date": "",
+                "target_end_date": "",
+                "updated_at": "",
+                "notes": "",
+            }
+        ]
+    )
+    grouped = _build_grid_options(df, group_by_bucket=True)
+    flat = _build_grid_options(df, group_by_bucket=False)
+    bucket_grouped = next(c for c in grouped["columnDefs"] if c["field"] == "lifecycle_bucket")
+    bucket_flat = next(c for c in flat["columnDefs"] if c["field"] == "lifecycle_bucket")
+    assert bucket_grouped.get("hide") is False or not bucket_grouped.get("hide")
+    assert bucket_grouped.get("sort") == "asc"
+    assert bucket_flat.get("hide") is True
