@@ -42,9 +42,9 @@ def check(label: str, fg: str, bg: str, threshold: float = 4.5) -> None:
 
 
 # --- backgrounds -------------------------------------------------------------
-BG = "#15120F"        # app background
-PANEL = "#211B15"     # cards / sidebar
-PANEL2 = "#2A231C"    # raised panel
+BG = "#14152A"        # app background (dark navy)
+PANEL = "#1E2140"     # cards / sidebar
+PANEL2 = "#2A2E54"    # raised panel
 
 # --- the palette under test (keep in sync with palette.py / theme.css) -------
 from pathlib import Path
@@ -65,8 +65,8 @@ for surface_name, surface in (("bg", BG), ("panel", PANEL), ("panel2", PANEL2)):
     check(f"success on {surface_name}", PAL["SUCCESS"], surface)
     check(f"info on {surface_name}", PAL["INFO"], surface)
 
-check("white on accent button", "#FFFFFF", PAL["ACCENT_BUTTON"])
-check("ink on accent-soft badge bg (approx over panel)", PAL["ACCENT_TEXT"], PANEL)
+check("navy ink on gold button", PAL["BTN_INK"], PAL["ACCENT_BUTTON"])
+check("gold text on accent-soft badge bg (approx over panel)", PAL["ACCENT_TEXT"], PANEL)
 
 # --- report ------------------------------------------------------------------
 failures = 0

@@ -382,7 +382,7 @@ with tab_recurring:
                 "red": "color: #F2917F; font-weight: 700",
                 "orange": "color: #E5A54E; font-weight: 600",
                 "green": "color: #62C384",
-                "gray": "color: #C6BCAE",
+                "gray": "color: #B7BAD1",
             }
             uc = row["_urgency_color"]
             style = color_map.get(uc, "")
@@ -1031,7 +1031,7 @@ with tab_csv_import:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#B7BAD1;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Accounting &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",

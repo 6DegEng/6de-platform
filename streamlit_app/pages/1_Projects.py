@@ -1333,7 +1333,7 @@ def _render_kanban_card(proj, status: str) -> None:
     HTML block (Streamlit widgets cannot live inside a raw HTML span).
     """
     pid = proj["id"]
-    border_color = PROJECT_STATUS_COLORS.get(status, "#C6BCAE")
+    border_color = PROJECT_STATUS_COLORS.get(status, "#B7BAD1")
     name = proj["name"] or ""
     display_name = name if len(name) <= 40 else name[:37] + "..."
     client = proj["client_name"] or "—"
@@ -1354,9 +1354,9 @@ def _render_kanban_card(proj, status: str) -> None:
         f'margin-bottom:8px;" title="{safe_full_name}">'
         f'<div style="font-weight:bold;font-size:0.95em;">{safe_job}</div>'
         f'<div style="font-size:0.9em;color:#1f2937;">{safe_name}</div>'
-        f'<div style="font-size:0.78em;color:#C6BCAE;">'
+        f'<div style="font-size:0.78em;color:#B7BAD1;">'
         f"Client: {safe_client}</div>"
-        f'<div style="font-size:0.78em;color:#C6BCAE;">'
+        f'<div style="font-size:0.78em;color:#B7BAD1;">'
         f"Target: {safe_target}</div>"
         f"</div>"
     )
@@ -1456,7 +1456,7 @@ def render_kanban_view(projects: Sequence) -> None:
             pill_html = render_status_pill(status)
             count = len(buckets[status])
             st.markdown(
-                f"{pill_html} <span style='color:#C6BCAE;font-size:0.9em;'>"
+                f"{pill_html} <span style='color:#B7BAD1;font-size:0.9em;'>"
                 f"({count})</span>",
                 unsafe_allow_html=True,
             )
@@ -1574,10 +1574,13 @@ def render_timeline_view(projects: Sequence) -> None:
     # base + width in milliseconds for the same effect with finer control.
     fig = go.Figure()
 
+    from modules.status_colors import readable_text_color
+
     bar_y: list[str] = []
     bar_base: list = []
     bar_width: list = []  # in milliseconds for Plotly's date axis
     bar_colors: list[str] = []
+    bar_text_colors: list[str] = []
     bar_hovertext: list[str] = []
     bar_pids: list[int] = []
     bar_labels: list[str] = []
@@ -1604,9 +1607,9 @@ def render_timeline_view(projects: Sequence) -> None:
         bar_y.append(f"{proj['job_number']} — {(proj['name'] or '')[:30]}")
         bar_base.append(datetime.combine(eff_start, datetime.min.time()))
         bar_width.append(delta_days * one_day_ms)
-        bar_colors.append(
-            PROJECT_STATUS_COLORS.get(proj["status"], "#C6BCAE")
-        )
+        _bar_bg = PROJECT_STATUS_COLORS.get(proj["status"], "#B7BAD1")
+        bar_colors.append(_bar_bg)
+        bar_text_colors.append(readable_text_color(_bar_bg))
         bar_pids.append(proj["id"])
         bar_labels.append(f"{proj['job_number']} — {(proj['name'] or '')[:30]}")
 
@@ -1637,6 +1640,7 @@ def render_timeline_view(projects: Sequence) -> None:
             orientation="h",
             marker_color=bar_colors,
             text=bar_labels,
+            textfont=dict(color=bar_text_colors),
             textposition="inside",
             insidetextanchor="start",
             hovertext=bar_hovertext,
@@ -1650,20 +1654,23 @@ def render_timeline_view(projects: Sequence) -> None:
 
     fig.update_layout(
         height=chart_height,
+        font=dict(color="#EDEEF5"),  # navy theme: light ink for axis labels/ticks
         xaxis=dict(
             type="date",
             title="",
             showgrid=True,
-            gridcolor="rgba(0,0,0,0.08)",
+            gridcolor="rgba(212,184,120,0.12)",  # faint gold grid on the dark chart
+            tickfont=dict(color="#B7BAD1"),
         ),
         yaxis=dict(
             autorange="reversed",  # earliest start at the top
             title="",
-            tickfont=dict(size=11),
+            tickfont=dict(size=11, color="#B7BAD1"),
             automargin=True,  # 3a smoke #4: keep long "<job> — <name>" labels intact
         ),
         margin=dict(l=10, r=10, t=20, b=10),
-        plot_bgcolor="white",
+        paper_bgcolor="#1E2140",  # navy panel — folds the chart into the dark theme
+        plot_bgcolor="#1E2140",
         bargap=0.3,
     )
 
@@ -1809,7 +1816,7 @@ def render_calendar_view(projects: Sequence) -> None:
     for proj, sd, ted in dated:
         pid = proj["id"]
         status = proj["status"]
-        color = PROJECT_STATUS_COLORS.get(status, "#C6BCAE")
+        color = PROJECT_STATUS_COLORS.get(status, "#B7BAD1")
         # Truncate the display name but pass the full name through extended
         # props so a future hover-handler could surface it. ``html.escape``
         # guards against ampersands / angle brackets in user-supplied data
