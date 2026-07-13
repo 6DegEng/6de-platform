@@ -138,7 +138,7 @@ def _build_status_renderer() -> JsCode:
                 const labels = {label_map_js};
                 const darkText = {dark_text_js};
                 const value = params.value || '';
-                const bg = colors[value] || '#C6BCAE';
+                const bg = colors[value] || '#B7BAD1';
                 const fg = darkText.includes(value) ? '#111827' : '#ffffff';
                 const label = labels[value] || value;
                 this.eGui = document.createElement('span');
@@ -169,7 +169,7 @@ def _build_priority_renderer() -> JsCode:
                 if (!value) return;
                 const colors = {color_map_js};
                 const labels = {label_map_js};
-                const color = colors[value] || '#C6BCAE';
+                const color = colors[value] || '#B7BAD1';
                 const label = labels[value] || value;
                 this.eGui.innerHTML = `<span style="color:${{color}};font-weight:600;` +
                        `font-size:0.85em;">● ${{label}}</span>`;
@@ -193,7 +193,7 @@ def _build_percent_renderer() -> JsCode:
                 const width = Math.min(100, Math.max(0, pct));
                 const color = pct >= 100 ? '#62C384' : pct >= 50 ? '#8FB8F2' : '#E5A54E';
                 this.eGui.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">` +
-                       `<div style="flex:1;background:#3a3128;border-radius:4px;height:8px;">` +
+                       `<div style="flex:1;background:#34375E;border-radius:4px;height:8px;">` +
                        `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
                        `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
             }
@@ -387,7 +387,7 @@ def _build_bucket_renderer() -> JsCode:
                 if (!value) return;
                 const colors = {color_map_js};
                 const labels = {label_map_js};
-                const bg = colors[value] || '#C6BCAE';
+                const bg = colors[value] || '#B7BAD1';
                 const label = labels[value] || value;
                 this.eGui.innerHTML = `<span style="background:${{bg}};color:#fff;` +
                        `padding:2px 8px;border-radius:8px;font-size:0.8em;` +

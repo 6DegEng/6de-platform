@@ -36,6 +36,15 @@ def _auto_fg(bg: str, light: str = "#ffffff", dark: str = "#111827") -> str:
     return dark
 
 
+def readable_text_color(bg: str, light: str = "#ffffff", dark: str = "#111827") -> str:
+    """Public: best-contrast text color for text drawn ON ``bg``.
+
+    Used e.g. for labels rendered inside colored Timeline bars, where the bar
+    fill varies per status and no single text color reads on all of them.
+    """
+    return _auto_fg(bg, light=light, dark=dark)
+
+
 # ---------------------------------------------------------------------------
 # Status colors & labels (mirrors status_pills.py — that module re-exports)
 # ---------------------------------------------------------------------------

@@ -1,24 +1,29 @@
-/* 6DE Platform design system — "VIP office" warm-dark, brand-orange.
+/* 6DE Platform design system — navy + gold "command center" dark (6de.xyz brand).
    Loaded on every page via components.branding.load_theme(). Presentation only. */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  /* Accent is split by role (see components/palette.py — the verified source
-     of truth, checked by scripts/check_contrast.py):
-     - accent-text: light enough to READ on dark surfaces (7.3:1 on bg)
-     - accent (buttons/fills): deep enough that white text passes AA (6.7:1)
-     - accent-border: underlines/edges (3:1 UI-component rule) */
-  --6de-accent: #A23A0D;
-  --6de-accent-text: #E78A52;
-  --6de-accent-border: #B8410F;
-  --6de-accent-dark: #6d3115;
-  --6de-accent-soft: rgba(184, 65, 15, 0.14);
-  --6de-bg: #15120F;
-  --6de-panel: #211B15;
-  --6de-panel-2: #2A231C;
-  --6de-border: #3a3128;
-  --6de-ink: #F2EDE5;     /* 16.0:1 on bg (was #EFE9E2) */
-  --6de-muted: #C6BCAE;   /* 10.0:1 on bg (was #B9AFA3 at 7.9:1) */
+  /* Brand navy #2E3186 + gold #D4B878. On a DARK theme the gold is the accent
+     that reads (see components/palette.py — the verified source of truth,
+     checked by scripts/check_contrast.py):
+     - accent-text: gold, reads on dark surfaces (9.3:1 on bg)
+     - accent (buttons/fills): gold fill with NAVY ink on top (9.3:1)
+     - accent-border: gold underlines/edges (3:1 UI-component rule)
+     - indigo: the brand navy, used for structural accents on the dark base */
+  --6de-accent: #D4B878;
+  --6de-accent-text: #D4B878;
+  --6de-accent-border: #D4B878;
+  --6de-accent-dark: #C2A65C;      /* darker gold — button hover */
+  --6de-accent-ink: #14152A;       /* navy ink ON gold buttons */
+  --6de-accent-soft: rgba(212, 184, 120, 0.14);
+  --6de-indigo: #2E3186;           /* brand navy */
+  --6de-indigo-bright: #4A4FB5;    /* lighter indigo for edges on dark */
+  --6de-bg: #14152A;
+  --6de-panel: #1E2140;
+  --6de-panel-2: #2A2E54;
+  --6de-border: #34375E;
+  --6de-ink: #EDEEF5;     /* 15.5:1 on bg */
+  --6de-muted: #B7BAD1;   /* 9.4:1 on bg */
   --6de-font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
@@ -30,18 +35,19 @@ button, input, textarea, select, .stMarkdown, h1, h2, h3, h4, h5, h6 {
 
 .stApp { background: var(--6de-bg); }
 
-/* Kill any residual Streamlit default red (#FF4B4B) on buttons; brand-orange primary. */
+/* Kill any residual Streamlit default red (#FF4B4B) on buttons; brand-gold primary
+   with navy ink (gold reads far better than navy would on the dark navy base). */
 .stButton > button[kind="primary"],
 .stButton > button[data-testid="baseButton-primary"],
 .stFormSubmitButton > button {
   background: var(--6de-accent) !important;
   border: 1px solid var(--6de-accent) !important;
-  color: #fff !important;
-  font-weight: 600;
+  color: var(--6de-accent-ink) !important;
+  font-weight: 700;
   border-radius: 9px;
 }
 .stButton > button[kind="primary"]:hover,
-.stFormSubmitButton > button:hover { background: var(--6de-accent-dark) !important; border-color: var(--6de-accent-dark) !important; }
+.stFormSubmitButton > button:hover { background: var(--6de-accent-dark) !important; border-color: var(--6de-accent-dark) !important; color: var(--6de-accent-ink) !important; }
 
 /* Secondary buttons: warm outline */
 .stButton > button[kind="secondary"], .stButton > button:not([kind="primary"]) {
@@ -50,7 +56,7 @@ button, input, textarea, select, .stMarkdown, h1, h2, h3, h4, h5, h6 {
   color: var(--6de-ink) !important;
   border-radius: 9px;
 }
-.stButton > button:hover { border-color: var(--6de-accent) !important; color: #fff !important; }
+.stButton > button:hover { border-color: var(--6de-accent) !important; color: var(--6de-ink) !important; }
 
 /* Inputs */
 input, textarea, [data-baseweb="input"], [data-baseweb="select"] > div, .stTextInput input, .stNumberInput input, .stDateInput input {
@@ -110,8 +116,8 @@ a:hover { color: var(--6de-ink); }
 [data-testid="stAppViewContainer"] > .main,
 section[data-testid="stMain"] {
   background:
-    radial-gradient(1100px 600px at 82% -8%, rgba(184, 65, 15, 0.10), transparent 60%),
-    radial-gradient(900px 500px at -5% 110%, rgba(109, 49, 21, 0.10), transparent 55%),
+    radial-gradient(1100px 600px at 82% -8%, rgba(46, 49, 134, 0.28), transparent 60%),
+    radial-gradient(900px 500px at -5% 110%, rgba(212, 184, 120, 0.06), transparent 55%),
     linear-gradient(0deg, rgba(255,255,255,0.012), rgba(255,255,255,0.012)),
     var(--6de-bg);
 }
@@ -119,8 +125,8 @@ section[data-testid="stMain"] {
 section[data-testid="stMain"]::before {
   content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.5;
   background-image:
-    linear-gradient(rgba(184,65,15,0.030) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(184,65,15,0.030) 1px, transparent 1px);
+    linear-gradient(rgba(74,79,181,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(74,79,181,0.035) 1px, transparent 1px);
   background-size: 46px 46px;
 }
 section[data-testid="stMain"] .block-container { position: relative; z-index: 1; }

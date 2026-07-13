@@ -144,14 +144,14 @@ with tab_aging:
         label = bucket_labels[bucket]
         col.markdown(
             f"<div style='border-left:4px solid {color};padding:8px 12px;'>"
-            f"<span style='font-size:0.85rem;color:#C6BCAE;'>{label}</span><br>"
+            f"<span style='font-size:0.85rem;color:#B7BAD1;'>{label}</span><br>"
             f"<span style='font-size:1.3rem;font-weight:700;'>"
             f"{format_currency(amount)}</span></div>",
             unsafe_allow_html=True,
         )
     bc6.markdown(
         f"<div style='border-left:4px solid #8FB8F2;padding:8px 12px;'>"
-        f"<span style='font-size:0.85rem;color:#C6BCAE;'>Total</span><br>"
+        f"<span style='font-size:0.85rem;color:#B7BAD1;'>Total</span><br>"
         f"<span style='font-size:1.3rem;font-weight:700;'>"
         f"{format_currency(aging_total)}</span></div>",
         unsafe_allow_html=True,
@@ -165,7 +165,7 @@ with tab_aging:
         ar_data = []
         for r in aging_rows:
             bucket = r["aging_bucket"]
-            color = bucket_colors.get(bucket, "#C6BCAE")
+            color = bucket_colors.get(bucket, "#B7BAD1")
             ar_data.append({
                 "Invoice": r["invoice_number"],
                 "Job #": r["job_number"],
@@ -468,7 +468,7 @@ with tab_revenue:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#B7BAD1;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Financials &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",
