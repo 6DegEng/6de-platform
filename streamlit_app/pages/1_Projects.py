@@ -1348,12 +1348,15 @@ def _render_kanban_card(proj, status: str) -> None:
     safe_client = _html.escape(str(client))
     safe_target = _html.escape(str(target))
 
+    # Dark card that folds into the navy theme (was a light #f8f9fa card that
+    # clashed on the dark page). Status color stays as the left accent border.
     card_html = (
         f'<div style="border-left:4px solid {border_color};'
-        f"background:#f8f9fa;padding:8px 12px;border-radius:4px;"
+        f"background:#1E2140;border:1px solid #34375E;border-left:4px solid {border_color};"
+        f"padding:8px 12px;border-radius:6px;"
         f'margin-bottom:8px;" title="{safe_full_name}">'
-        f'<div style="font-weight:bold;font-size:0.95em;">{safe_job}</div>'
-        f'<div style="font-size:0.9em;color:#1f2937;">{safe_name}</div>'
+        f'<div style="font-weight:bold;font-size:0.95em;color:#EDEEF5;">{safe_job}</div>'
+        f'<div style="font-size:0.9em;color:#EDEEF5;">{safe_name}</div>'
         f'<div style="font-size:0.78em;color:#B7BAD1;">'
         f"Client: {safe_client}</div>"
         f'<div style="font-size:0.78em;color:#B7BAD1;">'
