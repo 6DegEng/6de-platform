@@ -83,8 +83,22 @@ a:hover { color: var(--6de-ink); }
   border-radius: 12px;
   padding: 16px 18px;
 }
-[data-testid="stMetricValue"], [data-testid="stMetricValue"] > div { color: var(--6de-ink) !important; font-weight: 700; }
+/* Value: shrink with the column instead of ellipsis-clipping to "$0…." on
+   narrow 5-across rows (Financials KPIs, Dashboard tiles at ~1174px). */
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] > div,
+[data-testid="stMetricValue"] p {
+  color: var(--6de-ink) !important; font-weight: 700;
+  font-size: clamp(1.05rem, 2.1vw, 1.75rem) !important;
+  white-space: normal !important; overflow: visible !important;
+  text-overflow: clip !important; line-height: 1.15;
+}
+/* Label: wrap to a second line rather than truncating ("Contracted Backl…"). */
 [data-testid="stMetricLabel"] { color: var(--6de-muted); }
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] > div,
+[data-testid="stMetricLabel"] p {
+  white-space: normal !important; overflow: visible !important;
+  text-overflow: clip !important;
+}
 
 /* Dataframes */
 [data-testid="stDataFrame"], .stDataFrame { border: 1px solid var(--6de-border); border-radius: 10px; }
