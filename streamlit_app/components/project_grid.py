@@ -423,7 +423,11 @@ def _build_grid_options(
         "job_number",
         header_name=COLUMN_HEADERS["job_number"],
         editable=False,
-        width=110,
+        width=120,
+        # minWidth so the pinned job-number can't be squeezed to ~40px (which
+        # truncated "2601.100" -> "260" and bled under the Project name).
+        minWidth=110,
+        suppressSizeToFit=True,
         pinned="left",
         checkboxSelection=multi_select,
         headerCheckboxSelection=multi_select,
@@ -443,7 +447,11 @@ def _build_grid_options(
         cellEditor="agSelectCellEditor",
         cellEditorParams={"values": list(PROJECT_STATUSES)},
         cellRenderer=_build_status_renderer(),
-        width=140,
+        width=165,
+        # fit the widest pill ("AHJ/Permitting") so it doesn't bleed into the
+        # next column.
+        minWidth=155,
+        suppressSizeToFit=True,
     )
 
     # True row-grouping is an AG Grid Enterprise module (we ship community
