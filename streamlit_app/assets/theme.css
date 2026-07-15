@@ -9,15 +9,14 @@
      - accent-text: gold, reads on dark surfaces (9.3:1 on bg)
      - accent (buttons/fills): gold fill with NAVY ink on top (9.3:1)
      - accent-border: gold underlines/edges (3:1 UI-component rule)
-     - indigo: the brand navy, used for structural accents on the dark base */
+     The brand navy #2E3186 is used directly in the ambient gradient/grid rules
+     below (as rgba() with alpha), not as a standalone variable. */
   --6de-accent: #D4B878;
   --6de-accent-text: #D4B878;
   --6de-accent-border: #D4B878;
   --6de-accent-dark: #C2A65C;      /* darker gold — button hover */
   --6de-accent-ink: #14152A;       /* navy ink ON gold buttons */
   --6de-accent-soft: rgba(212, 184, 120, 0.14);
-  --6de-indigo: #2E3186;           /* brand navy */
-  --6de-indigo-bright: #4A4FB5;    /* lighter indigo for edges on dark */
   --6de-bg: #14152A;
   --6de-panel: #1E2140;
   --6de-panel-2: #2A2E54;
