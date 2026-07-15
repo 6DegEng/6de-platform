@@ -138,7 +138,7 @@ def _build_status_renderer() -> JsCode:
                 const labels = {label_map_js};
                 const darkText = {dark_text_js};
                 const value = params.value || '';
-                const bg = colors[value] || '#B7BAD1';
+                const bg = colors[value] || '#34375E';  // dark navy fallback so white text reads
                 const fg = darkText.includes(value) ? '#111827' : '#ffffff';
                 const label = labels[value] || value;
                 this.eGui = document.createElement('span');
@@ -397,7 +397,7 @@ def _build_bucket_renderer() -> JsCode:
                 if (!value) return;
                 const colors = {color_map_js};
                 const labels = {label_map_js};
-                const bg = colors[value] || '#B7BAD1';
+                const bg = colors[value] || '#34375E';  // dark navy fallback so white text reads
                 const label = labels[value] || value;
                 const pill = document.createElement('span');
                 pill.style.cssText = `background:${{bg}};color:#fff;` +
