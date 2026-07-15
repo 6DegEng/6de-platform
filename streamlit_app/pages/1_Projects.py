@@ -1365,42 +1365,41 @@ def _render_kanban_card(proj, status: str) -> None:
     )
     st.markdown(card_html, unsafe_allow_html=True)
 
-    # Status change + View button row.
-    ctl_col1, ctl_col2 = st.columns([2, 1])
-    with ctl_col1:
-        current_idx = (
-            PROJECT_STATUSES.index(proj["status"])
-            if proj["status"] in PROJECT_STATUSES
-            else 0
-        )
-        new_status = st.selectbox(
-            "Status",
-            list(PROJECT_STATUSES),
-            index=current_idx,
-            format_func=lambda s: PROJECT_STATUS_LABELS.get(s, s),
-            label_visibility="collapsed",
-            key=f"kanban_status_p{pid}",
-        )
-        if new_status != proj["status"]:
-            if new_status not in PROJECT_STATUSES:
-                st.error(f"Invalid status: {new_status!r}")
-            else:
-                try:
-                    update_project(conn, pid, status=new_status)
-                    st.toast(
-                        f"{proj['job_number']} → "
-                        f"{PROJECT_STATUS_LABELS[new_status]}",
-                        icon="✅",
-                    )
-                    st.rerun()
-                except sqlite3.IntegrityError as exc:
-                    st.error(f"Database rejected status change: {exc}")
-                except ValueError as exc:
-                    st.error(f"Could not change status: {exc}")
-    with ctl_col2:
-        if st.button("View", key=f"kanban_open_p{pid}"):
-            st.session_state["ui:projects:focus"] = pid
-            st.rerun()
+    # Status change + View button, stacked full-width (the old side-by-side
+    # [2,1] split left the "View" button ~60px wide in a narrow kanban column,
+    # rendering it as vertical "V-i-e-w").
+    current_idx = (
+        PROJECT_STATUSES.index(proj["status"])
+        if proj["status"] in PROJECT_STATUSES
+        else 0
+    )
+    new_status = st.selectbox(
+        "Status",
+        list(PROJECT_STATUSES),
+        index=current_idx,
+        format_func=lambda s: PROJECT_STATUS_LABELS.get(s, s),
+        label_visibility="collapsed",
+        key=f"kanban_status_p{pid}",
+    )
+    if new_status != proj["status"]:
+        if new_status not in PROJECT_STATUSES:
+            st.error(f"Invalid status: {new_status!r}")
+        else:
+            try:
+                update_project(conn, pid, status=new_status)
+                st.toast(
+                    f"{proj['job_number']} → "
+                    f"{PROJECT_STATUS_LABELS[new_status]}",
+                    icon="✅",
+                )
+                st.rerun()
+            except sqlite3.IntegrityError as exc:
+                st.error(f"Database rejected status change: {exc}")
+            except ValueError as exc:
+                st.error(f"Could not change status: {exc}")
+    if st.button("View", key=f"kanban_open_p{pid}", use_container_width=True):
+        st.session_state["ui:projects:focus"] = pid
+        st.rerun()
 
 
 def render_kanban_view(projects: Sequence) -> None:
@@ -1453,22 +1452,31 @@ def render_kanban_view(projects: Sequence) -> None:
             buckets[p["status"]].append(p)
 
     # ------- Render columns -------
-    columns = st.columns(len(visible_statuses))
-    for col, status in zip(columns, visible_statuses):
-        with col:
-            pill_html = render_status_pill(status)
-            count = len(buckets[status])
-            st.markdown(
-                f"{pill_html} <span style='color:#B7BAD1;font-size:0.9em;'>"
-                f"({count})</span>",
-                unsafe_allow_html=True,
-            )
-            st.markdown("")  # small spacer
-            if not buckets[status]:
-                st.caption("Empty")
-                continue
-            for proj in buckets[status]:
-                _render_kanban_card(proj, status)
+    # Cap columns per row so cards stay readable. One row of all ~10 statuses
+    # made sliver-width cards with wrapped headers ("AHJ/Permi tting") and
+    # vertical "V-i-e-w" buttons; 5 per row keeps each column ~200px wide.
+    KANBAN_COLS_PER_ROW = 5
+    status_list = list(visible_statuses)
+    for start in range(0, len(status_list), KANBAN_COLS_PER_ROW):
+        row_statuses = status_list[start:start + KANBAN_COLS_PER_ROW]
+        # Always make KANBAN_COLS_PER_ROW columns so widths match across rows;
+        # only the first len(row_statuses) get filled.
+        columns = st.columns(KANBAN_COLS_PER_ROW)
+        for col, status in zip(columns, row_statuses):
+            with col:
+                pill_html = render_status_pill(status)
+                count = len(buckets[status])
+                st.markdown(
+                    f"{pill_html} <span style='color:#B7BAD1;font-size:0.9em;'>"
+                    f"({count})</span>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")  # small spacer
+                if not buckets[status]:
+                    st.caption("Empty")
+                    continue
+                for proj in buckets[status]:
+                    _render_kanban_card(proj, status)
 
     # ------- Detail panel for the focused project -------
     focus_pid = st.session_state.get("ui:projects:focus")
