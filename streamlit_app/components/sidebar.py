@@ -35,7 +35,15 @@ def _nav(target: str, label: str, icon: str) -> None:
 
 
 def render_sidebar() -> None:
-    """Render the curated sidebar + hide Streamlit's default nav. Idempotent per run."""
+    """Render the curated sidebar + hide Streamlit's default nav. Idempotent per run.
+
+    In top-nav mode (``st.session_state["_top_nav"]`` set by the experimental
+    ``streamlit_app/app.py`` entry point) the section nav-links are skipped —
+    ``st.navigation(position="top")`` owns page navigation there — but the
+    logout, Regenerate-snapshots, and PE footer stay so those controls remain
+    reachable. The default Home.py entry is unaffected (flag unset).
+    """
+    top_nav = bool(st.session_state.get("_top_nav"))
     # Hide the default auto-generated multi-page nav so the grouped nav is the
     # only navigation the user sees (on every page, not just Home).
     st.markdown(
@@ -48,28 +56,29 @@ def render_sidebar() -> None:
         st.caption("ERP Platform v3.5")
         st.divider()
 
-        _section("Overview")
-        _nav("Home.py", "Home", ":material/home:")
-        st.markdown("")
+        if not top_nav:
+            _section("Overview")
+            _nav("Home.py", "Home", ":material/home:")
+            st.markdown("")
 
-        _section("Sales Pipeline")
-        _nav("pages/4_CRM.py", "CRM", ":material/handshake:")
-        _nav("pages/7_Bids.py", "Gov Solicitations", ":material/gavel:")
-        _nav("pages/1_Projects.py", "Projects", ":material/folder:")
-        _nav("pages/3_Permits.py", "Permits", ":material/description:")
-        st.markdown("")
+            _section("Sales Pipeline")
+            _nav("pages/4_CRM.py", "CRM", ":material/handshake:")
+            _nav("pages/7_Bids.py", "Gov Solicitations", ":material/gavel:")
+            _nav("pages/1_Projects.py", "Projects", ":material/folder:")
+            _nav("pages/3_Permits.py", "Permits", ":material/description:")
+            st.markdown("")
 
-        _section("Tools")
-        _nav("pages/8_Calculator.py", "Engineering", ":material/calculate:")
-        st.markdown("")
+            _section("Tools")
+            _nav("pages/8_Calculator.py", "Engineering", ":material/calculate:")
+            st.markdown("")
 
-        _section("Finance")
-        _nav("pages/2_Billing.py", "Billing", ":material/receipt_long:")
-        _nav("pages/5_Timekeeping.py", "Timekeeping", ":material/schedule:")
-        _nav("pages/6_Financials.py", "Financials", ":material/monitoring:")
-        _nav("pages/9_Accounting.py", "Accounting", ":material/account_balance:")
+            _section("Finance")
+            _nav("pages/2_Billing.py", "Billing", ":material/receipt_long:")
+            _nav("pages/5_Timekeeping.py", "Timekeeping", ":material/schedule:")
+            _nav("pages/6_Financials.py", "Financials", ":material/monitoring:")
+            _nav("pages/9_Accounting.py", "Accounting", ":material/account_balance:")
 
-        st.divider()
+            st.divider()
         st.markdown("**SharePoint mirror**")
         if st.button(
             "Regenerate snapshots",
