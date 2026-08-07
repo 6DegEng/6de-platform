@@ -257,11 +257,11 @@ CREATE TABLE IF NOT EXISTS opportunities (
                         'structural','civil','sirs','forensics','pools',
                         'recertification','threshold','government','other'
                     )),
-    stage           TEXT    NOT NULL DEFAULT 'lead'
-                    CHECK (stage IN (
-                        'lead','qualifying','proposal_sent','negotiating',
-                        'won','lost','dormant'
-                    )),
+    -- Stage values are validated against the crm_stages config table at the
+    -- app layer (modules/crm) so stages stay configurable. Databases created
+    -- before 2026-07 still carry the original 7-value CHECK constraint and
+    -- continue to work with the seeded default stages.
+    stage           TEXT    NOT NULL DEFAULT 'lead',
     estimated_value REAL    DEFAULT 0,
     probability     INTEGER DEFAULT 50 CHECK (probability BETWEEN 0 AND 100),
     source          TEXT
@@ -276,6 +276,38 @@ CREATE TABLE IF NOT EXISTS opportunities (
     notes           TEXT,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- CRM STAGES (configurable pipeline stages — crm-polish phase 2)
+-- key    = stable identifier stored in opportunities.stage
+-- name   = display label (renameable without touching data)
+-- is_won / is_lost mark the terminal outcome stages. is_closed marks any
+-- stage excluded from the open pipeline (won, lost, dormant/parked).
+-- probability = default deal probability applied on stage change.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS crm_stages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    key             TEXT    NOT NULL UNIQUE,
+    name            TEXT    NOT NULL,
+    sequence        INTEGER NOT NULL DEFAULT 0,
+    probability     INTEGER NOT NULL DEFAULT 50 CHECK (probability BETWEEN 0 AND 100),
+    is_won          INTEGER NOT NULL DEFAULT 0,
+    is_lost         INTEGER NOT NULL DEFAULT 0,
+    is_closed       INTEGER NOT NULL DEFAULT 0,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ============================================================
+-- LOST REASONS (why-we-lost taxonomy for opportunities)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS lost_reasons (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL UNIQUE,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ============================================================
