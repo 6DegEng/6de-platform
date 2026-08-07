@@ -10,6 +10,7 @@ Idempotent: uses INSERT OR REPLACE keyed on unique columns.
 from __future__ import annotations
 
 import math
+import os
 import re
 import sys
 from datetime import datetime
@@ -27,15 +28,39 @@ from db import ensure_db, log_activity  # noqa: E402
 import openpyxl  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Source file
+# Source file — resolved dynamically. The old hardcoded C:\Users\Juan path
+# broke when the Windows account changed to JuanCastillo, so this importer
+# could not find the workbook on the machine it runs on. Precedence:
+#   1. --file CLI argument
+#   2. SIXDE_TRACKER_XLSX environment variable
+#   3. the OneDrive default under the CURRENT user's home (Path.home())
+# Mirrors resolve_source() in import_accounting.py.
 # ---------------------------------------------------------------------------
-SOURCE = (
-    Path(r"C:\Users\Juan\OneDrive - 6th Degree Engineering")
-    / "Documents - 6th Degree Engineering"
-    / "06_Engineering"
-    / "01_ Active Projects"
-    / "Project_Tracker_2026.xlsx"
-)
+def _default_source() -> Path:
+    return (
+        Path.home()
+        / "OneDrive - 6th Degree Engineering"
+        / "Documents - 6th Degree Engineering"
+        / "06_Engineering"
+        # Folder is "01_Active Projects" — the old hardcoded path carried a
+        # stray space ("01_ Active Projects") and would never have resolved
+        # even after the username was fixed.
+        / "01_Active Projects"
+        / "Project_Tracker_2026.xlsx"
+    )
+
+
+def resolve_source(cli_file: str | None = None) -> Path:
+    if cli_file:
+        return Path(cli_file)
+    env = os.environ.get("SIXDE_TRACKER_XLSX")
+    if env:
+        return Path(env)
+    return _default_source()
+
+
+# Back-compat for callers that import SOURCE directly.
+SOURCE = resolve_source()
 
 
 # ---------------------------------------------------------------------------

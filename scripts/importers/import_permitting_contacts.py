@@ -19,6 +19,7 @@ Idempotency: dedup by email if present; otherwise by (name, organization).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -30,12 +31,31 @@ from db import ensure_db, log_activity  # noqa: E402
 
 import openpyxl  # noqa: E402
 
-SOURCE = (
-    Path(r"C:\Users\juanc\OneDrive - 6th Degree Engineering")
-    / "Documents - 6th Degree Engineering"
-    / "06_Engineering"
-    / "Permitting Contacts.xlsm"
-)
+# Source file — resolved dynamically. The old hardcoded C:\Users\juanc path
+# pointed at a Windows account that no longer exists. Precedence:
+#   1. --file CLI argument  2. SIXDE_PERMIT_CONTACTS_XLSM  3. Path.home()
+# Mirrors resolve_source() in import_accounting.py.
+def _default_source() -> Path:
+    return (
+        Path.home()
+        / "OneDrive - 6th Degree Engineering"
+        / "Documents - 6th Degree Engineering"
+        / "06_Engineering"
+        / "Permitting Contacts.xlsm"
+    )
+
+
+def resolve_source(cli_file: str | None = None) -> Path:
+    if cli_file:
+        return Path(cli_file)
+    env = os.environ.get("SIXDE_PERMIT_CONTACTS_XLSM")
+    if env:
+        return Path(env)
+    return _default_source()
+
+
+# Back-compat for callers that import SOURCE directly.
+SOURCE = resolve_source()
 
 
 def _classify_role(title: str | None, department: str | None) -> str:

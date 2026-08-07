@@ -53,6 +53,13 @@ def resolve_source(cli_file: str | None = None) -> Path:
         return Path(env)
     return _default_source()
 
+
+# Back-compat for callers that import SOURCE directly — scripts/sync_accounting.py
+# does (`from ... import SOURCE as WORKBOOK_PATH`). Dropping this constant during
+# the dynamic-path refactor broke that module at IMPORT time, so the nightly sync
+# seam could not even load. tests/test_importer_paths.py pins it.
+SOURCE = resolve_source()
+
 # Regex for 6-digit project number (years 22-26)
 _JOB_RE = re.compile(r"\b(2[2-6]\d{4})\b")
 
