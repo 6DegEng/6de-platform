@@ -29,6 +29,7 @@ from db import ensure_db
 from modules.dashboard.queries import get_dashboard_data
 from modules.invoicing.crud import get_ar_aging_report, get_ar_aging_summary
 from streamlit_app.auth import require_auth
+from streamlit_app.components.db_status import DB_ERRORS, render_db_error
 from modules.activity_formatter import format_activity
 from streamlit_app.components.formatters import (
     days_until,
@@ -101,14 +102,64 @@ render_sidebar()
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
-conn = ensure_db()
-data = get_dashboard_data(conn)
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_dashboard_data(_conn):
+    """Cache one dashboard payload for a minute.
+
+    get_dashboard_data() runs ~20 queries, and Streamlit re-runs this whole
+    script on every widget interaction — so without a cache each click cost
+    20 more round-trips to Azure Postgres. The leading underscore tells
+    Streamlit not to hash the connection object; the cache key is constant,
+    which is correct here because every user sees the same company-wide
+    numbers. Writes elsewhere in the app surface within the TTL, or
+    immediately via the Refresh button below.
+    """
+    return get_dashboard_data(_conn)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_ar_aging_summary(_conn):
+    return get_ar_aging_summary(_conn)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_ar_aging_report(_conn):
+    # Rows must become plain dicts before they can be cached — st.cache_data
+    # pickles what it stores, and sqlite3.Row is not picklable.
+    return [dict(r) for r in get_ar_aging_report(_conn)]
+
+
+_CACHED_LOADERS = (
+    _load_dashboard_data,
+    _load_ar_aging_summary,
+    _load_ar_aging_report,
+)
+
+
+try:
+    # ensure_db() belongs inside the boundary too: when the server is down
+    # it fails here, opening the connection, not later running the queries.
+    conn = ensure_db()
+    data = _load_dashboard_data(conn)
+except DB_ERRORS as exc:
+    render_db_error(exc, "the dashboard")
+    st.stop()
 
 # ---------------------------------------------------------------------------
 # Header
 # ---------------------------------------------------------------------------
-st.markdown("## Dashboard")
-st.caption(format_date(str(__import__("datetime").date.today())))
+_title_col, _refresh_col = st.columns([6, 1])
+with _title_col:
+    st.markdown("## Dashboard")
+    st.caption(format_date(str(__import__("datetime").date.today())))
+with _refresh_col:
+    # Escape hatch from the 60s cache — for when you've just entered
+    # something elsewhere and want to see it reflected now.
+    if st.button("Refresh", help="Reload the dashboard numbers now",
+                 use_container_width=True):
+        for _loader in _CACHED_LOADERS:
+            _loader.clear()
+        st.rerun()
 
 # ===================================================================
 # ROW 1 — Key Metrics
@@ -216,7 +267,11 @@ with c12:
 st.markdown("---")
 st.markdown("### AR Aging")
 
-aging_summary = get_ar_aging_summary(conn)
+try:
+    aging_summary = _load_ar_aging_summary(conn)
+except DB_ERRORS as exc:
+    render_db_error(exc, "AR aging")
+    st.stop()
 aging_total = sum(aging_summary.values())
 
 _bucket_colors = {
@@ -256,7 +311,7 @@ ar6.markdown(
 
 # Top delinquent clients callout (90+ days past due)
 if aging_summary.get("90+", 0) > 0:
-    aging_rows = get_ar_aging_report(conn)
+    aging_rows = _load_ar_aging_report(conn)
     delinquent = [r for r in aging_rows if r["aging_bucket"] == "90+"]
     # Aggregate by client
     client_totals: dict[str, float] = {}

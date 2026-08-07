@@ -52,6 +52,35 @@ _PUBLIC_PATH = str(_config.DB_PATH)
 
 _SQL_NOW_TEXT = "to_char((now() at time zone 'utc'), 'YYYY-MM-DD HH24:MI:SS')"
 
+# libpq keepalive settings. Azure Postgres (and the gateway in front of it)
+# drops connections that have gone quiet, which is what left the cached
+# dashboard connection holding a dead socket. Poking the socket every two
+# minutes keeps it from ever looking idle, so the reconnect path in
+# PgConnection becomes the fallback rather than the normal case.
+# connect_timeout also caps how long a page load can hang on a dead server.
+# Only applied when the caller's DSN doesn't already set them.
+_KEEPALIVE_PARAMS = {
+    "keepalives": 1,
+    "keepalives_idle": 120,     # start probing after 2 min of silence
+    "keepalives_interval": 20,  # then every 20s
+    "keepalives_count": 3,      # give up after 3 failed probes
+    "connect_timeout": 10,
+}
+
+
+def _with_keepalives(conninfo: str) -> str:
+    """Add keepalive defaults to a DSN, leaving any explicit values alone."""
+    try:
+        existing = psycopg.conninfo.conninfo_to_dict(conninfo)
+    except Exception:  # noqa: BLE001
+        # Malformed DSN: let psycopg.connect() raise the real error rather
+        # than failing here, where the message could echo the password.
+        return conninfo
+    missing = {k: v for k, v in _KEEPALIVE_PARAMS.items() if k not in existing}
+    if not missing:
+        return conninfo
+    return psycopg.conninfo.make_conninfo(conninfo, **missing)
+
 # Matches a SQL single-quoted string literal, '' escapes included.
 _LITERAL_RE = re.compile(r"('(?:[^']|'')*')")
 _INSERT_TABLE_RE = re.compile(r"^\s*INSERT\s+INTO\s+([A-Za-z_]\w*)", re.IGNORECASE)
@@ -299,7 +328,7 @@ _PRAGMA_DATABASE_LIST_RE = re.compile(
 class PgCursor:
     def __init__(self, conn: "PgConnection"):
         self._conn = conn
-        self._cur = conn._pg.cursor()
+        self._cur = conn._new_raw_cursor()
         self.lastrowid: int | None = None
         self._synthetic: list[Row] | None = None
         self._row_meta: tuple | None = None
@@ -353,26 +382,49 @@ class PgCursor:
 
         coerced = _coerce_params(params) if has_params else None
         with self._conn._lock:
-            try:
-                self._cur.execute(translated, coerced)
-                self._conn._track_changes(self._cur.rowcount, translated)
-                if inject_returning:
+            self._run(lambda: self._cur.execute(translated, coerced))
+            self._conn._track_changes(self._cur.rowcount, translated)
+            self._conn._track_transaction(translated)
+            if inject_returning:
+                try:
                     rows = self._cur.fetchall()
-                    self.lastrowid = rows[-1][0] if rows else None
-            except Exception as exc:  # noqa: BLE001
-                raise _map_error(exc) from exc
+                except Exception as exc:  # noqa: BLE001
+                    raise _map_error(exc) from exc
+                self.lastrowid = rows[-1][0] if rows else None
         return self
 
     def executemany(self, sql: str, seq_of_params):
         seq = [(_coerce_params(p) or ()) for p in seq_of_params]
         translated = _translate_cached(sql, True)
         with self._conn._lock:
-            try:
-                self._cur.executemany(translated, seq)
-                self._conn._track_changes(self._cur.rowcount, translated)
-            except Exception as exc:  # noqa: BLE001
-                raise _map_error(exc) from exc
+            self._run(lambda: self._cur.executemany(translated, seq))
+            self._conn._track_changes(self._cur.rowcount, translated)
         return self
+
+    def _run(self, call) -> None:
+        """Run a statement, healing a server-dropped connection once.
+
+        Azure Postgres (and any gateway in front of it) closes connections
+        that have been idle for a while. The cached PgConnection only finds
+        out on the next statement, which used to surface as a raw
+        ``psycopg.OperationalError: the connection is closed`` traceback on
+        the dashboard. Reopen and run the statement once more — but only
+        when the connection is genuinely gone and no explicit transaction
+        was in flight, so a retry can never silently commit partial work.
+        """
+        try:
+            call()
+            return
+        except Exception as exc:  # noqa: BLE001
+            if not self._conn._safe_to_retry():
+                raise _map_error(exc) from exc
+        # _new_raw_cursor() reopens the connection before handing one back;
+        # `call` reads self._cur when invoked, so it picks up the new one.
+        self._cur = self._conn._new_raw_cursor()
+        try:
+            call()
+        except Exception as exc:  # noqa: BLE001
+            raise _map_error(exc) from exc
 
     def _wrap_rows(self, raw_rows):
         # cols/index are derived once per result set (reset in execute), not
@@ -442,36 +494,128 @@ class PgConnection:
         self._lock = threading.RLock()
         self._total_changes = 0
         self.row_factory = None  # accepted, ignored (rows are always Row)
+        self._conninfo = conninfo
+        self.schema = schema
+        self._pg = None
+        self._closed = False  # deliberate close() — never auto-reopened
+        # Explicit BEGIN in flight? Tracked here rather than read back from
+        # the server, because a dropped connection loses transaction_status.
+        self._explicit_tx = False
+        self._open()
+
+    # -- connection lifecycle ------------------------------------------------
+    def _open(self) -> None:
+        """Open the psycopg connection and apply the per-session setup.
+
+        Called on construction and again by ``_ensure_live()`` after the
+        server drops the connection. search_path and the round() shim are
+        *session* state, so a reconnect has to replay them — otherwise a
+        healed connection would silently query the wrong schema.
+        """
         try:
-            self._pg = psycopg.connect(conninfo, autocommit=True)
+            pg = psycopg.connect(_with_keepalives(self._conninfo), autocommit=True)
         except Exception as exc:  # noqa: BLE001
             # Never re-raise connect errors verbatim: libpq DSN-parse errors
             # can echo the conninfo string, which embeds the password.
             host = getattr(getattr(exc, "diag", None), "message_primary", None)
             raise sqlite3.OperationalError(
                 "could not connect to the configured Postgres server "
-                f"(schema {schema!r}): {type(exc).__name__}"
-                + (f": {host}" if host and conninfo not in str(host) else "")
+                f"(schema {self.schema!r}): {type(exc).__name__}"
+                + (f": {host}" if host and self._conninfo not in str(host) else "")
             ) from None
         try:
-            if schema != "public":
-                self._pg.execute(
-                    f'CREATE SCHEMA IF NOT EXISTS "{schema}"'
+            if self.schema != "public":
+                pg.execute(
+                    f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"'
                 )
-            self._pg.execute(f'SET search_path TO "{schema}"')
+            pg.execute(f'SET search_path TO "{self.schema}"')
             # SQLite's ROUND(x, n) accepts floats; Postgres only has
             # round(numeric, int). Install a per-schema shim so the app's
             # widespread ROUND(<float expr>, n) keeps working unchanged.
-            self._pg.execute(
-                f'CREATE OR REPLACE FUNCTION "{schema}".round('
+            pg.execute(
+                f'CREATE OR REPLACE FUNCTION "{self.schema}".round('
                 "double precision, integer) RETURNS numeric AS "
                 "'SELECT round($1::numeric, $2)' LANGUAGE SQL IMMUTABLE"
             )
         except Exception as exc:  # noqa: BLE001
+            try:
+                pg.close()
+            except Exception:  # noqa: BLE001
+                pass
             raise _map_error(exc) from exc
-        self.schema = schema
+        self._pg = pg
+        self._explicit_tx = False
+
+    def _is_dead(self) -> bool:
+        """True when the underlying socket is gone and must be reopened."""
+        pg = self._pg
+        if pg is None or pg.closed:
+            return True
+        try:
+            return pg.info.status != psycopg.pq.ConnStatus.OK
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _safe_to_retry(self) -> bool:
+        """A failed statement may be retried only if the connection is
+        genuinely dead and no explicit transaction was open. A real SQL
+        error leaves the connection alive, so it is re-raised untouched."""
+        return self._is_dead() and not self._explicit_tx
+
+    def _ensure_live(self) -> None:
+        """Reopen the connection if the server has dropped it."""
+        with self._lock:
+            if self._closed:
+                # Reopening here would resurrect a handle the caller
+                # deliberately released, masking a use-after-close bug.
+                raise sqlite3.ProgrammingError(
+                    "cannot operate on a closed database."
+                )
+            if not self._is_dead():
+                return
+            if self._explicit_tx:
+                # The BEGIN block died with the socket. Reconnecting would
+                # let the rest of its statements commit one by one under
+                # autocommit — partial work the caller believes is atomic.
+                # Fail loudly instead, and clear the flag so the caller's
+                # rollback/retry path can reopen normally.
+                self._explicit_tx = False
+                raise sqlite3.OperationalError(
+                    "the postgres connection was lost during a transaction; "
+                    "it has been rolled back by the server"
+                )
+            old, self._pg = self._pg, None
+            if old is not None:
+                try:
+                    old.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._open()
+
+    def _new_raw_cursor(self):
+        """A live psycopg cursor, healing a dropped connection first.
+
+        psycopg raises from ``cursor()`` itself when the connection is
+        closed, so this has to map the error too — the module's contract is
+        that callers only ever see sqlite3 exceptions.
+        """
+        with self._lock:
+            self._ensure_live()
+            try:
+                return self._pg.cursor()
+            except Exception as exc:  # noqa: BLE001
+                raise _map_error(exc) from exc
 
     # -- internals ----------------------------------------------------------
+    def _track_transaction(self, sql: str) -> None:
+        """Follow explicit BEGIN/COMMIT/ROLLBACK so ``_safe_to_retry`` knows
+        whether a dropped statement stood alone or was part of a unit."""
+        head = sql.lstrip()[:9].upper()
+        if head.startswith("BEGIN"):
+            self._explicit_tx = True
+        elif head.startswith(("COMMIT", "ROLLBACK", "END")):
+            self._explicit_tx = False
+
     def _track_changes(self, rowcount: int, sql: str) -> None:
         if rowcount and rowcount > 0 and re.match(
             r"\s*(INSERT|UPDATE|DELETE)\b", sql, flags=re.IGNORECASE
@@ -507,22 +651,38 @@ class PgConnection:
     def commit(self) -> None:
         # autocommit mode: an explicit BEGIN opens a server-side transaction;
         # commit only if one is actually open (mirrors sqlite autocommit).
-        with self._lock:
-            if self._pg.info.transaction_status != \
-                    psycopg.pq.TransactionStatus.IDLE:
-                self._pg.execute("COMMIT")
+        self._end_transaction("COMMIT")
 
     def rollback(self) -> None:
+        self._end_transaction("ROLLBACK")
+
+    def _end_transaction(self, verb: str) -> None:
         with self._lock:
-            if self._pg.info.transaction_status != \
-                    psycopg.pq.TransactionStatus.IDLE:
-                self._pg.execute("ROLLBACK")
+            if self._is_dead():
+                # The server already discarded whatever was open; there is
+                # nothing to commit and no connection to say it on. Don't
+                # reconnect just to end a transaction that no longer exists.
+                self._explicit_tx = False
+                return
+            try:
+                if self._pg.info.transaction_status != \
+                        psycopg.pq.TransactionStatus.IDLE:
+                    self._pg.execute(verb)
+            except Exception as exc:  # noqa: BLE001
+                raise _map_error(exc) from exc
+            finally:
+                self._explicit_tx = False
 
     def close(self) -> None:
-        try:
-            self._pg.close()
-        except Exception:  # noqa: BLE001
-            pass
+        with self._lock:
+            self._closed = True
+            self._explicit_tx = False
+            if self._pg is None:
+                return
+            try:
+                self._pg.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def __enter__(self):
         return self
