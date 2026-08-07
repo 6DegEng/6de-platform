@@ -113,12 +113,14 @@ class _FakeServer:
     def __init__(self):
         self.statements: list[str] = []
         self.handles: list[_FakeConn] = []
+        self.conninfos: list[str] = []
         self.sql_error: str | None = None
         self.refuse_connect = False
         self.connect_calls = 0
 
     def connect(self, conninfo, autocommit=False):
         self.connect_calls += 1
+        self.conninfos.append(conninfo)
         if self.refuse_connect:
             raise psycopg.OperationalError("connection refused")
         conn = _FakeConn(self)
@@ -252,6 +254,46 @@ def test_closed_connection_is_not_resurrected(server, conn):
         conn.execute("SELECT 1")
 
     assert server.connect_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Keepalives — stop the drop from happening in the first place
+# ---------------------------------------------------------------------------
+def test_keepalives_are_added_to_the_dsn():
+    out = psycopg.conninfo.conninfo_to_dict(
+        pg_compat._with_keepalives("postgresql://u:p@h:5432/db?sslmode=require")
+    )
+
+    assert out["keepalives"] == "1"
+    assert int(out["keepalives_idle"]) < 1800, \
+        "must probe well inside Azure's idle timeout"
+    assert out["connect_timeout"] == "10"
+    assert out["sslmode"] == "require", "existing settings must survive"
+
+
+def test_explicit_keepalive_settings_are_not_overridden():
+    out = psycopg.conninfo.conninfo_to_dict(
+        pg_compat._with_keepalives(
+            "postgresql://u:p@h/db?keepalives_idle=45&connect_timeout=3"
+        )
+    )
+
+    assert out["keepalives_idle"] == "45"
+    assert out["connect_timeout"] == "3"
+
+
+def test_malformed_dsn_is_passed_through_untouched():
+    """Raising here would surface a libpq parse error that can echo the
+    password; psycopg.connect() reports it safely instead."""
+    bad = "this is not a dsn"
+
+    assert pg_compat._with_keepalives(bad) == bad
+
+
+def test_connection_is_opened_with_keepalives(server, conn):
+    assert server.connect_calls == 1
+    opened = psycopg.conninfo.conninfo_to_dict(server.conninfos[0])
+    assert opened["keepalives"] == "1"
 
 
 def test_executemany_also_heals(server, conn):

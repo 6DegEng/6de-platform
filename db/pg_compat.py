@@ -52,6 +52,35 @@ _PUBLIC_PATH = str(_config.DB_PATH)
 
 _SQL_NOW_TEXT = "to_char((now() at time zone 'utc'), 'YYYY-MM-DD HH24:MI:SS')"
 
+# libpq keepalive settings. Azure Postgres (and the gateway in front of it)
+# drops connections that have gone quiet, which is what left the cached
+# dashboard connection holding a dead socket. Poking the socket every two
+# minutes keeps it from ever looking idle, so the reconnect path in
+# PgConnection becomes the fallback rather than the normal case.
+# connect_timeout also caps how long a page load can hang on a dead server.
+# Only applied when the caller's DSN doesn't already set them.
+_KEEPALIVE_PARAMS = {
+    "keepalives": 1,
+    "keepalives_idle": 120,     # start probing after 2 min of silence
+    "keepalives_interval": 20,  # then every 20s
+    "keepalives_count": 3,      # give up after 3 failed probes
+    "connect_timeout": 10,
+}
+
+
+def _with_keepalives(conninfo: str) -> str:
+    """Add keepalive defaults to a DSN, leaving any explicit values alone."""
+    try:
+        existing = psycopg.conninfo.conninfo_to_dict(conninfo)
+    except Exception:  # noqa: BLE001
+        # Malformed DSN: let psycopg.connect() raise the real error rather
+        # than failing here, where the message could echo the password.
+        return conninfo
+    missing = {k: v for k, v in _KEEPALIVE_PARAMS.items() if k not in existing}
+    if not missing:
+        return conninfo
+    return psycopg.conninfo.make_conninfo(conninfo, **missing)
+
 # Matches a SQL single-quoted string literal, '' escapes included.
 _LITERAL_RE = re.compile(r"('(?:[^']|'')*')")
 _INSERT_TABLE_RE = re.compile(r"^\s*INSERT\s+INTO\s+([A-Za-z_]\w*)", re.IGNORECASE)
@@ -484,7 +513,7 @@ class PgConnection:
         healed connection would silently query the wrong schema.
         """
         try:
-            pg = psycopg.connect(self._conninfo, autocommit=True)
+            pg = psycopg.connect(_with_keepalives(self._conninfo), autocommit=True)
         except Exception as exc:  # noqa: BLE001
             # Never re-raise connect errors verbatim: libpq DSN-parse errors
             # can echo the conninfo string, which embeds the password.
