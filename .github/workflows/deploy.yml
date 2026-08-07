@@ -19,6 +19,17 @@ name: Deploy to Azure
 on:
   push:
     branches: [main]
+    # Docs-only commits must not rebuild the image and restart production —
+    # every deploy briefly drops the running container, and a markdown edit
+    # is not worth an outage window. Anything that can change what RUNS
+    # (including this workflow and the Dockerfile) still deploys.
+    # Use workflow_dispatch to force a deploy after a docs-only change.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'Feature_Research/**'
+      - '.gitignore'
+      - '.gitattributes'
   workflow_dispatch:
 
 # Never overlap deploys; let an in-flight run finish before the next starts.
