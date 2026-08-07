@@ -10,19 +10,33 @@ for plain-English accountability and automated verification, not for me reading
 code. Always explain changes and their risks in plain language. Never assume I
 can spot a problem in a diff.
 
-### Autonomy and the gate
-Default to acting autonomously. Do **not** ask permission for work that is
-reversible, free, and local: writing/editing code, tests, docs, refactors,
-branches, **draft** PRs, local runs and experiments. Review every diff yourself
-before moving on.
+### Autonomy and the gate — REDUCED GATES (Juan's directive, 2026-08-07)
+Canonical policy lives in `ROADMAP.md` §0; this section mirrors it. Juan asked
+for as few gates, PRs, and approvals as possible so sessions run continuously.
 
-**Hard-stop and ask (the gate)** for anything irreversible, costly, external, or
-production-touching: deploys/releases, DNS or domain changes, creating or pushing
-to shared remotes, `gh repo create`, merging to `main`, sending email / messages
-/ PR comments, deleting files, database schema or data migrations, spending cloud
-quota, anything touching money, or anything under `01_Vesta\`. When you hit a
-gate, **don't block** — log it in the decision queue and keep working on ungated
-tasks.
+**UNGATED — act continuously, no permission needed:**
+- All local work: code, tests, docs, refactors, branches, local runs.
+- Committing **directly to `main`** for small, low-risk changes; short-lived
+  branches for bigger or riskier ones.
+- **Pushing to origin and merging to `main`** — *provided the full verification
+  bar below passes first*. Merging auto-deploys; that is accepted. No PR
+  ceremony for solo work: merge locally (`git merge --no-ff`) or push `main`.
+  Open a PR only when a change is risky enough that a diff record helps.
+- Post-deploy verification (health poll, live smoke check).
+- `git revert` of anything on `main` — reverting is always available.
+
+**STILL GATED — the short list.** Log in `ROADMAP.md` §8 WAITING ON JUAN and
+keep working; never block the loop on these:
+1. Prod **data** writes and schema migrations (importer `--commit`,
+   DELETE/UPDATE against the prod DB).
+2. Money, cloud quota, new Azure resources.
+3. DNS, domains, Key Vault, secrets, Entra/auth config.
+4. External comms (email, posting) and new external service signups.
+5. Deleting files or data; anything under `01_Vesta\`.
+
+**Verification replaces approval.** Merges are ungated *because* nothing merges
+without the proof bar. A wrong-but-tested-and-reversible change on `main` is
+acceptable; a silent unverified one is not.
 
 ### Verification bar (how you earn "done")
 Before calling anything done:
@@ -44,10 +58,11 @@ surface things I'm not qualified to know I need.** Don't pad the list to hit a
 number — quality over count.
 
 ### Decision queue and roadmap
-Maintain `ROADMAP.md` (or `DECISIONS.md`) in the repo. Append: your proposals, my
-rulings, gated items waiting on me, and what shipped. At session end, report a
-consolidated status: **shipped / blocked-on-me / proposed-next**. This is the
-memory between sessions.
+`ROADMAP.md` at the repo root is the decision queue and the memory between
+sessions. **Read it first every session.** Append: your proposals, my rulings,
+gated items waiting on me, and what shipped (§7 Session Log, one plain-English
+line per item; §8 WAITING ON JUAN refreshed). At session end, report a
+consolidated status: **shipped / blocked-on-me / proposed-next**.
 
 ### Conventions
 - `/plan` before large changes; `/batch` for cross-cutting changes (parallel
@@ -60,7 +75,9 @@ memory between sessions.
 
 ### This repo specifically
 - Hosting: Azure Web App `6de-platform-jc` (port 8000) + ACR `sixdeacrjc`; merging to
-  `main` auto-deploys via `.github/workflows/deploy.yml` — that is why merges are gated.
+  `main` auto-deploys via `.github/workflows/deploy.yml`. Merges are ungated under the
+  reduced-gate policy, but a deploy is **not done until the live site is verified** —
+  poll for health, then load real pages and confirm no traceback.
 - The FULL test suite must stay green (run on both backends once Postgres lands:
   `DB_BACKEND=postgres` + local Docker Postgres via `docker-compose.dev.yml`).
 - Gates here: Azure quota/resources, apex DNS, Postgres cutover (see
