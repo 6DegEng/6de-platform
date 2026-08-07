@@ -70,3 +70,22 @@ def render_db_error(exc: BaseException, what: str = "this page") -> None:
     with st.expander("Technical details"):
         st.caption("Useful when reporting the problem.")
         st.code(f"{type(exc).__name__}: {exc}", language="text")
+
+
+def connect_or_explain(what: str = "this page"):
+    """Open the database, or render the failure panel and halt the page.
+
+    The one-liner every page uses in place of a bare ``ensure_db()``::
+
+        conn = connect_or_explain("Projects")
+
+    Returns a live connection. Never returns on failure — ``st.stop()``
+    ends the script run, so callers can use the result unconditionally.
+    """
+    from db import ensure_db
+
+    try:
+        return ensure_db()
+    except DB_ERRORS as exc:
+        render_db_error(exc, what)
+        st.stop()

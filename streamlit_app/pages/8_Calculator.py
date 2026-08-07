@@ -10,8 +10,9 @@ if str(_PLATFORM_ROOT) not in sys.path:
 
 import streamlit as st
 from streamlit_app.components.sidebar import render_sidebar
+from streamlit_app.components.db_status import connect_or_explain  # noqa: E402
 from streamlit_app.components.branding import page_header
-from db import ensure_db, get_calc_connection
+from db import get_calc_connection
 from modules.calculator.auditor import audit_calc_project, render_audit_markdown
 from modules.calculator.bridge import (
     get_all_links,
@@ -28,7 +29,7 @@ require_auth()
 render_sidebar()
 page_header("Engineering", "Calc engine & code references", "🔧")
 
-conn = ensure_db()
+conn = connect_or_explain("Calculator")
 calc_conn = get_calc_connection()
 
 # ------------------------------------------------------------------

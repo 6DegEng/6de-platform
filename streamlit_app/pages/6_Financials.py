@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from streamlit_app.components.sidebar import render_sidebar
+from streamlit_app.components.db_status import connect_or_explain  # noqa: E402
 from streamlit_app.components.branding import empty_state
 from streamlit_app.components.branding import page_header
 
@@ -23,7 +24,6 @@ _PLATFORM_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
-from db import ensure_db  # noqa: E402
 from modules.financials.queries import (  # noqa: E402
     get_financial_summary,
     get_profitability_by_client,
@@ -52,7 +52,7 @@ render_sidebar()
 # ---------------------------------------------------------------------------
 # DB connection
 # ---------------------------------------------------------------------------
-conn = ensure_db()
+conn = connect_or_explain("Financials")
 
 # ---------------------------------------------------------------------------
 # Header

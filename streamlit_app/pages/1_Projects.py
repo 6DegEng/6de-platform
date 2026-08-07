@@ -20,6 +20,7 @@ from typing import Optional, Sequence
 
 import streamlit as st
 from streamlit_app.components.sidebar import render_sidebar
+from streamlit_app.components.db_status import connect_or_explain  # noqa: E402
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
 from config import CALC_EXE_PATH, MSGRAPH_CLIENT_ID, MSGRAPH_TENANT_ID  # noqa: E402
-from db import ensure_db, get_calc_connection  # noqa: E402
+from db import get_calc_connection  # noqa: E402
 from modules.calculator.bridge import (  # noqa: E402
     get_calc_outputs,
     get_linked_calcs,
@@ -101,7 +102,7 @@ require_auth()
 render_sidebar()
 page_header("Projects", "Active engagements, milestones & status", "🏗️")
 
-conn = ensure_db()
+conn = connect_or_explain("Projects")
 
 # ---------------------------------------------------------------------------
 # Session-state defaults — initialize BEFORE any UI renders so reruns see them.

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import streamlit as st
 from streamlit_app.components.sidebar import render_sidebar
+from streamlit_app.components.db_status import connect_or_explain  # noqa: E402
 from streamlit_app.components.branding import page_header
 
 # ---------------------------------------------------------------------------
@@ -23,7 +24,6 @@ _PLATFORM_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
 
-from db import ensure_db  # noqa: E402
 from modules.crm.crud import (  # noqa: E402
     SOURCES,
     SERVICE_LINES,
@@ -66,7 +66,7 @@ render_sidebar()
 page_header("CRM & Pipeline", "Opportunities & client relationships", "📊")
 st.caption("6th Degree Engineering -- Opportunity Pipeline and Client Management")
 
-conn = ensure_db()
+conn = connect_or_explain("CRM")
 
 # ---------------------------------------------------------------------------
 # Stage configuration — read from the crm_stages table (seeded with the
