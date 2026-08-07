@@ -35,9 +35,14 @@ acceptable; a silent unverified one is not.
 
 ---
 
-## 1. Current state (verified 2026-08-07)
+## 1. Current state
 
-- **Prod is DOWN-ish:** every page shows `psycopg.OperationalError: the connection is closed`
+> **SUPERSEDED — this section describes the state BEFORE the 2026-08-07 loop session.
+> Kept for the root-cause record. Live now: prod is HEALTHY, running the navy+gold
+> theme with self-healing connections, error boundaries on all 10 pages, and `/Health`.
+> Still true below: prod data is stale/empty, and there is no external monitoring yet.**
+
+- ~~**Prod is DOWN-ish:**~~ FIXED — was `psycopg.OperationalError: the connection is closed`
   (verified live in Chrome, Home + Projects). Root cause: `@st.cache_resource` caches one
   `PgConnection` for the process lifetime (`db/__init__.py:543`); Azure Postgres drops idle
   sockets; deployed code has no keepalives and no reconnect, so the cached handle dies and every
@@ -57,14 +62,15 @@ acceptable; a silent unverified one is not.
 - **No monitoring:** only `/_stcore/health` (container liveness, not DB). Nightly pg_dump backup
   workflow exists and is solid.
 
-## 2. THE ONE HUMAN ACTION THAT UNBLOCKS EVERYTHING
+## 2. ~~THE ONE HUMAN ACTION~~ — DONE 2026-08-07
 
-```
-cd C:\Users\JuanCastillo\code\6de-platform
-gh auth login        # (or sign in when Git Credential Manager prompts on first push)
-```
+`gh auth login` is complete (account `6DegEng`) and git identity is configured
+(`Juan Castillo <juan@6de.xyz>`; there was no `.gitconfig` on this machine at all).
+Shipping is unblocked and all four branches are backed up on origin.
 
-Without this, nothing ships. With it, the loop below runs indefinitely.
+**Next-session prompt: the `/goal` loop prompt from 2026-08-07 still works verbatim.**
+Step 0 (the `gh auth login` fallback) is now a no-op, and §4 items 1–7 are done, so the
+loop will correctly fall through to §5 Phase A / §6 backlog on its next pass.
 
 ---
 
@@ -81,6 +87,10 @@ Without this, nothing ships. With it, the loop below runs indefinitely.
    is verified.** If broken: fix forward immediately or `git revert` the merge — reverting main
    is always available and ungated.
 6. Append what shipped to the Session Log (§7) — one line each, plain English.
+
+> **STATUS 2026-08-07 (end of loop session): §4 NOW queue items 1–7 are ALL DONE and
+> live-verified. Item 8 is a taste decision for Juan.** The next session starts at §5
+> Phase A (data freshness) or §6 backlog top-down. See §7 for what shipped.
 
 ## 4. NOW queue (strict order, first session after `gh auth login`)
 
@@ -140,6 +150,32 @@ Juan's machines, so sync must run locally, not in the cloud.
 
 ## 7. Session Log (append-only; newest first)
 
+- **2026-08-07 (Claude Code loop session, part 2 — NOW queue 1–7 COMPLETE):**
+  - **Error boundary on all 10 pages.** Added `connect_or_explain()` so each page is a
+    one-liner, not nine copies of the same try/except. Verified live against a dead
+    database: Projects shows the branded panel with page chrome intact, not a traceback.
+  - **`/Health` page shipped and live** — runs a real `SELECT 1` and reports backend,
+    latency, status. Live in prod: `status: ok, backend: postgres`. Deliberately NOT
+    wired into the Docker HEALTHCHECK: Azure restarts unhealthy containers, so a
+    DB-aware container check would turn a brief database blip into a restart loop that
+    takes the app fully down — replacing the friendly error page with nothing.
+  - **Docs-only commits no longer redeploy production.** A ROADMAP edit had triggered a
+    full image rebuild + container restart for zero runtime change.
+  - **All three importers are path-portable.** Verified by resolution, not inspection —
+    which caught a second defect: the tracker path also had a stray space
+    (`01_ Active Projects` vs the real `01_Active Projects`), so fixing only the
+    username would have left it broken.
+  - **Found and fixed a live break I had just shipped:** the accounting-importer
+    refactor merged earlier today dropped the module-level `SOURCE` constant, which
+    `scripts/sync_accounting.py` imports directly — that module was DEAD at import time
+    and the nightly-sync seam (§5 Phase A) could not load. Restored and pinned by a test.
+  - Test suite 570 -> **675 green**.
+  - Deploy-verification lesson worth keeping: the first page load after a deploy is
+    often still the OLD container mid-swap. It can look healthy because the restart
+    cleared the dead socket. **Confirm a marker from the new code before believing it.**
+    Separately, a stale client-side page list made `/Health` 404 after it was genuinely
+    deployed — a cache-busting query param proved the route was fine.
+
 - **2026-08-07 (Claude Code loop session — the outage is OVER):**
   - Git identity was missing entirely on this machine (no `.gitconfig`); set to
     Juan Castillo <juan@6de.xyz>. `gh auth login` done by Juan → shipping unblocked.
@@ -159,15 +195,26 @@ Juan's machines, so sync must run locally, not in the cloud.
   active in this clone during the sweep (committed `e7f550e` — keepalives/error-boundary/
   cached-reads). Nothing pushed (auth blocker stands).
 
-## 8. WAITING ON JUAN (refresh every session)
+## 8. WAITING ON JUAN (refreshed 2026-08-07, end of loop session)
 
-1. **`gh auth login` in the clone** — unblocks all shipping (§2). ~2 minutes.
-2. Optional immediate relief before the deploy: restart Web App `6de-platform-jc` in the Azure
-   portal (clears the dead connection until it idles out again).
-3. Top-nav vs sidebar decision (`feat/top-nav-header` — run `streamlit run streamlit_app/app.py` to try it).
-4. Supervised importer `--commit` runs (accounting first: dry-run says 705 rows / Net $6,098.49
-   reconciles to the penny), then the standing-sync scheme approval (§5 Phase C).
-5. Uptime-monitor account signup (free tier, e.g. UptimeRobot) once the health endpoint ships.
-6. Engineering calc-DB decision: bundle `common.db` in the image vs pull from blob (+ set `SIXDE_CALC_DB`).
-7. Flip repo 6DegEng/6de-platform private (fee schedule is public; 60-day cron auto-disable risk).
-8. Timesheet data decisions for B2 (260304 building mapping; add Halil as employee w/ role; dup row 260223).
+*(`gh auth login` and the Azure restart stopgap are DONE — both removed from this list.)*
+
+1. **Easy Auth exclusion for `/Health`** — the endpoint is live and working, but Azure
+   Easy Auth answers 401 to anonymous requests on every path except `/_stcore/health`,
+   so an uptime monitor cannot read it yet. Adding the exclusion is auth config = gated.
+   **This blocks item 2 below.**
+2. Uptime-monitor account signup (free tier, e.g. UptimeRobot) — needs item 1 first.
+3. Supervised importer `--commit` runs (accounting first: dry-run says 705 rows /
+   Net $6,098.49 reconciles to the penny), then the standing-sync scheme approval
+   (§5 Phase C). All three importers can now FIND their workbooks, so these are ready
+   to run whenever you can watch.
+4. Top-nav vs sidebar taste decision (`feat/top-nav-header`, pushed but unmerged —
+   run `streamlit run streamlit_app/app.py` to try it). This is §4 item 8.
+5. Engineering calc-DB decision: bundle `common.db` in the image vs pull from blob
+   (+ set `SIXDE_CALC_DB`).
+6. Flip repo 6DegEng/6de-platform private (fee schedule is public; 60-day cron
+   auto-disable risk).
+7. Timesheet data decisions for B2 (260304 building mapping; add Halil as employee
+   w/ role; dup row 260223).
+8. Batch-approval to delete the ~40 stale `origin/*` branches (B12) and the vestigial
+   PyInstaller launcher files (B9) — deletion is gated.
