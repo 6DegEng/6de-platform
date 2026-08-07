@@ -1333,7 +1333,7 @@ def _render_kanban_card(proj, status: str) -> None:
     HTML block (Streamlit widgets cannot live inside a raw HTML span).
     """
     pid = proj["id"]
-    border_color = PROJECT_STATUS_COLORS.get(status, "#C6BCAE")
+    border_color = PROJECT_STATUS_COLORS.get(status, "#B7BAD1")
     name = proj["name"] or ""
     display_name = name if len(name) <= 40 else name[:37] + "..."
     client = proj["client_name"] or "—"
@@ -1348,56 +1348,58 @@ def _render_kanban_card(proj, status: str) -> None:
     safe_client = _html.escape(str(client))
     safe_target = _html.escape(str(target))
 
+    # Dark card that folds into the navy theme (was a light #f8f9fa card that
+    # clashed on the dark page). Status color stays as the left accent border.
     card_html = (
         f'<div style="border-left:4px solid {border_color};'
-        f"background:#f8f9fa;padding:8px 12px;border-radius:4px;"
+        f"background:#1E2140;border:1px solid #34375E;border-left:4px solid {border_color};"
+        f"padding:8px 12px;border-radius:6px;"
         f'margin-bottom:8px;" title="{safe_full_name}">'
-        f'<div style="font-weight:bold;font-size:0.95em;">{safe_job}</div>'
-        f'<div style="font-size:0.9em;color:#1f2937;">{safe_name}</div>'
-        f'<div style="font-size:0.78em;color:#C6BCAE;">'
+        f'<div style="font-weight:bold;font-size:0.95em;color:#EDEEF5;">{safe_job}</div>'
+        f'<div style="font-size:0.9em;color:#EDEEF5;">{safe_name}</div>'
+        f'<div style="font-size:0.78em;color:#B7BAD1;">'
         f"Client: {safe_client}</div>"
-        f'<div style="font-size:0.78em;color:#C6BCAE;">'
+        f'<div style="font-size:0.78em;color:#B7BAD1;">'
         f"Target: {safe_target}</div>"
         f"</div>"
     )
     st.markdown(card_html, unsafe_allow_html=True)
 
-    # Status change + View button row.
-    ctl_col1, ctl_col2 = st.columns([2, 1])
-    with ctl_col1:
-        current_idx = (
-            PROJECT_STATUSES.index(proj["status"])
-            if proj["status"] in PROJECT_STATUSES
-            else 0
-        )
-        new_status = st.selectbox(
-            "Status",
-            list(PROJECT_STATUSES),
-            index=current_idx,
-            format_func=lambda s: PROJECT_STATUS_LABELS.get(s, s),
-            label_visibility="collapsed",
-            key=f"kanban_status_p{pid}",
-        )
-        if new_status != proj["status"]:
-            if new_status not in PROJECT_STATUSES:
-                st.error(f"Invalid status: {new_status!r}")
-            else:
-                try:
-                    update_project(conn, pid, status=new_status)
-                    st.toast(
-                        f"{proj['job_number']} → "
-                        f"{PROJECT_STATUS_LABELS[new_status]}",
-                        icon="✅",
-                    )
-                    st.rerun()
-                except sqlite3.IntegrityError as exc:
-                    st.error(f"Database rejected status change: {exc}")
-                except ValueError as exc:
-                    st.error(f"Could not change status: {exc}")
-    with ctl_col2:
-        if st.button("View", key=f"kanban_open_p{pid}"):
-            st.session_state["ui:projects:focus"] = pid
-            st.rerun()
+    # Status change + View button, stacked full-width (the old side-by-side
+    # [2,1] split left the "View" button ~60px wide in a narrow kanban column,
+    # rendering it as vertical "V-i-e-w").
+    current_idx = (
+        PROJECT_STATUSES.index(proj["status"])
+        if proj["status"] in PROJECT_STATUSES
+        else 0
+    )
+    new_status = st.selectbox(
+        "Status",
+        list(PROJECT_STATUSES),
+        index=current_idx,
+        format_func=lambda s: PROJECT_STATUS_LABELS.get(s, s),
+        label_visibility="collapsed",
+        key=f"kanban_status_p{pid}",
+    )
+    if new_status != proj["status"]:
+        if new_status not in PROJECT_STATUSES:
+            st.error(f"Invalid status: {new_status!r}")
+        else:
+            try:
+                update_project(conn, pid, status=new_status)
+                st.toast(
+                    f"{proj['job_number']} → "
+                    f"{PROJECT_STATUS_LABELS[new_status]}",
+                    icon="✅",
+                )
+                st.rerun()
+            except sqlite3.IntegrityError as exc:
+                st.error(f"Database rejected status change: {exc}")
+            except ValueError as exc:
+                st.error(f"Could not change status: {exc}")
+    if st.button("View", key=f"kanban_open_p{pid}", use_container_width=True):
+        st.session_state["ui:projects:focus"] = pid
+        st.rerun()
 
 
 def render_kanban_view(projects: Sequence) -> None:
@@ -1450,22 +1452,31 @@ def render_kanban_view(projects: Sequence) -> None:
             buckets[p["status"]].append(p)
 
     # ------- Render columns -------
-    columns = st.columns(len(visible_statuses))
-    for col, status in zip(columns, visible_statuses):
-        with col:
-            pill_html = render_status_pill(status)
-            count = len(buckets[status])
-            st.markdown(
-                f"{pill_html} <span style='color:#C6BCAE;font-size:0.9em;'>"
-                f"({count})</span>",
-                unsafe_allow_html=True,
-            )
-            st.markdown("")  # small spacer
-            if not buckets[status]:
-                st.caption("Empty")
-                continue
-            for proj in buckets[status]:
-                _render_kanban_card(proj, status)
+    # Cap columns per row so cards stay readable. One row of all ~10 statuses
+    # made sliver-width cards with wrapped headers ("AHJ/Permi tting") and
+    # vertical "V-i-e-w" buttons; 5 per row keeps each column ~200px wide.
+    KANBAN_COLS_PER_ROW = 5
+    status_list = list(visible_statuses)
+    for start in range(0, len(status_list), KANBAN_COLS_PER_ROW):
+        row_statuses = status_list[start:start + KANBAN_COLS_PER_ROW]
+        # Always make KANBAN_COLS_PER_ROW columns so widths match across rows;
+        # only the first len(row_statuses) get filled.
+        columns = st.columns(KANBAN_COLS_PER_ROW)
+        for col, status in zip(columns, row_statuses):
+            with col:
+                pill_html = render_status_pill(status)
+                count = len(buckets[status])
+                st.markdown(
+                    f"{pill_html} <span style='color:#B7BAD1;font-size:0.9em;'>"
+                    f"({count})</span>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("")  # small spacer
+                if not buckets[status]:
+                    st.caption("Empty")
+                    continue
+                for proj in buckets[status]:
+                    _render_kanban_card(proj, status)
 
     # ------- Detail panel for the focused project -------
     focus_pid = st.session_state.get("ui:projects:focus")
@@ -1574,10 +1585,13 @@ def render_timeline_view(projects: Sequence) -> None:
     # base + width in milliseconds for the same effect with finer control.
     fig = go.Figure()
 
+    from modules.status_colors import readable_text_color
+
     bar_y: list[str] = []
     bar_base: list = []
     bar_width: list = []  # in milliseconds for Plotly's date axis
     bar_colors: list[str] = []
+    bar_text_colors: list[str] = []
     bar_hovertext: list[str] = []
     bar_pids: list[int] = []
     bar_labels: list[str] = []
@@ -1604,9 +1618,9 @@ def render_timeline_view(projects: Sequence) -> None:
         bar_y.append(f"{proj['job_number']} — {(proj['name'] or '')[:30]}")
         bar_base.append(datetime.combine(eff_start, datetime.min.time()))
         bar_width.append(delta_days * one_day_ms)
-        bar_colors.append(
-            PROJECT_STATUS_COLORS.get(proj["status"], "#C6BCAE")
-        )
+        _bar_bg = PROJECT_STATUS_COLORS.get(proj["status"], "#B7BAD1")
+        bar_colors.append(_bar_bg)
+        bar_text_colors.append(readable_text_color(_bar_bg))
         bar_pids.append(proj["id"])
         bar_labels.append(f"{proj['job_number']} — {(proj['name'] or '')[:30]}")
 
@@ -1637,6 +1651,7 @@ def render_timeline_view(projects: Sequence) -> None:
             orientation="h",
             marker_color=bar_colors,
             text=bar_labels,
+            textfont=dict(color=bar_text_colors),
             textposition="inside",
             insidetextanchor="start",
             hovertext=bar_hovertext,
@@ -1650,20 +1665,23 @@ def render_timeline_view(projects: Sequence) -> None:
 
     fig.update_layout(
         height=chart_height,
+        font=dict(color="#EDEEF5"),  # navy theme: light ink for axis labels/ticks
         xaxis=dict(
             type="date",
             title="",
             showgrid=True,
-            gridcolor="rgba(0,0,0,0.08)",
+            gridcolor="rgba(212,184,120,0.12)",  # faint gold grid on the dark chart
+            tickfont=dict(color="#B7BAD1"),
         ),
         yaxis=dict(
             autorange="reversed",  # earliest start at the top
             title="",
-            tickfont=dict(size=11),
+            tickfont=dict(size=11, color="#B7BAD1"),
             automargin=True,  # 3a smoke #4: keep long "<job> — <name>" labels intact
         ),
         margin=dict(l=10, r=10, t=20, b=10),
-        plot_bgcolor="white",
+        paper_bgcolor="#1E2140",  # navy panel — folds the chart into the dark theme
+        plot_bgcolor="#1E2140",
         bargap=0.3,
     )
 
@@ -1809,7 +1827,7 @@ def render_calendar_view(projects: Sequence) -> None:
     for proj, sd, ted in dated:
         pid = proj["id"]
         status = proj["status"]
-        color = PROJECT_STATUS_COLORS.get(status, "#C6BCAE")
+        color = PROJECT_STATUS_COLORS.get(status, "#B7BAD1")
         # Truncate the display name but pass the full name through extended
         # props so a future hover-handler could surface it. ``html.escape``
         # guards against ampersands / angle brackets in user-supplied data

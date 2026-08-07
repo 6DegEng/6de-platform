@@ -138,7 +138,7 @@ def _build_status_renderer() -> JsCode:
                 const labels = {label_map_js};
                 const darkText = {dark_text_js};
                 const value = params.value || '';
-                const bg = colors[value] || '#C6BCAE';
+                const bg = colors[value] || '#34375E';  // dark navy fallback so white text reads
                 const fg = darkText.includes(value) ? '#111827' : '#ffffff';
                 const label = labels[value] || value;
                 this.eGui = document.createElement('span');
@@ -175,7 +175,7 @@ def _build_priority_renderer() -> JsCode:
                 if (!value) return;
                 const colors = {color_map_js};
                 const labels = {label_map_js};
-                const color = colors[value] || '#C6BCAE';
+                const color = colors[value] || '#B7BAD1';
                 const label = labels[value] || value;
                 const dot = document.createElement('span');
                 dot.style.cssText = `color:${{color}};font-weight:600;` +
@@ -203,7 +203,7 @@ def _build_percent_renderer() -> JsCode:
                 const width = Math.min(100, Math.max(0, pct));
                 const color = pct >= 100 ? '#62C384' : pct >= 50 ? '#8FB8F2' : '#E5A54E';
                 this.eGui.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">` +
-                       `<div style="flex:1;background:#3a3128;border-radius:4px;height:8px;">` +
+                       `<div style="flex:1;background:#34375E;border-radius:4px;height:8px;">` +
                        `<div style="width:${width}%;background:${color};border-radius:4px;height:100%;"></div>` +
                        `</div><span style="font-size:0.8em;min-width:30px;">${pct}%</span></div>`;
             }
@@ -397,7 +397,7 @@ def _build_bucket_renderer() -> JsCode:
                 if (!value) return;
                 const colors = {color_map_js};
                 const labels = {label_map_js};
-                const bg = colors[value] || '#C6BCAE';
+                const bg = colors[value] || '#34375E';  // dark navy fallback so white text reads
                 const label = labels[value] || value;
                 const pill = document.createElement('span');
                 pill.style.cssText = `background:${{bg}};color:#fff;` +
@@ -437,7 +437,11 @@ def _build_grid_options(
         "job_number",
         header_name=COLUMN_HEADERS["job_number"],
         editable=False,
-        width=110,
+        width=120,
+        # minWidth so the pinned job-number can't be squeezed to ~40px (which
+        # truncated "2601.100" -> "260" and bled under the Project name).
+        minWidth=110,
+        suppressSizeToFit=True,
         pinned="left",
         checkboxSelection=multi_select,
         headerCheckboxSelection=multi_select,
@@ -457,7 +461,11 @@ def _build_grid_options(
         cellEditor="agSelectCellEditor",
         cellEditorParams={"values": list(PROJECT_STATUSES)},
         cellRenderer=_build_status_renderer(),
-        width=140,
+        width=165,
+        # fit the widest pill ("AHJ/Permitting") so it doesn't bleed into the
+        # next column.
+        minWidth=155,
+        suppressSizeToFit=True,
     )
 
     # True row-grouping is an AG Grid Enterprise module (we ship community

@@ -296,14 +296,14 @@ for _col, (_bucket, _amount) in zip(_ar_cols, aging_summary.items()):
     _label = _bucket_labels[_bucket]
     _col.markdown(
         f"<div style='border-left:4px solid {_color};padding:8px 12px;'>"
-        f"<span style='font-size:0.85rem;color:#C6BCAE;'>{_label}</span><br>"
+        f"<span style='font-size:0.85rem;color:#B7BAD1;'>{_label}</span><br>"
         f"<span style='font-size:1.3rem;font-weight:700;'>"
         f"{format_currency(_amount)}</span></div>",
         unsafe_allow_html=True,
     )
 ar6.markdown(
     f"<div style='border-left:4px solid #8FB8F2;padding:8px 12px;'>"
-    f"<span style='font-size:0.85rem;color:#C6BCAE;'>Total</span><br>"
+    f"<span style='font-size:0.85rem;color:#B7BAD1;'>Total</span><br>"
     f"<span style='font-size:1.3rem;font-weight:700;'>"
     f"{format_currency(aging_total)}</span></div>",
     unsafe_allow_html=True,
@@ -503,7 +503,7 @@ with chart_right:
 # ---------------------------------------------------------------------------
 st.markdown("---")
 st.markdown(
-    "<div style='text-align:center;color:#C6BCAE;font-size:0.78rem;'>"
+    "<div style='text-align:center;color:#B7BAD1;font-size:0.78rem;'>"
     "6th Degree Engineering &bull; Company Platform &bull; "
     "Juan C. Castillo, P.E. (FL PE #98059)"
     "</div>",
