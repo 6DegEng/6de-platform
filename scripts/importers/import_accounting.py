@@ -10,6 +10,8 @@ Idempotent: uses INSERT OR IGNORE / INSERT OR REPLACE with unique constraints.
 """
 from __future__ import annotations
 
+import argparse
+import os
 import re
 import sys
 from datetime import datetime
@@ -27,14 +29,29 @@ from db import ensure_db, log_activity  # noqa: E402
 import openpyxl  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Source file
+# Source file — resolved dynamically (the old hardcoded C:\Users\Juan path broke
+# when the Windows account changed to JuanCastillo). Order of precedence:
+#   1. --file CLI argument
+#   2. SIXDE_ACCOUNTING_XLSM environment variable
+#   3. the OneDrive default under the CURRENT user's home (Path.home())
 # ---------------------------------------------------------------------------
-SOURCE = (
-    Path(r"C:\Users\Juan\OneDrive - 6th Degree Engineering")
-    / "Documents - 6th Degree Engineering"
-    / "04_Accounting"
-    / "Accounting_6DE_2026.xlsm"
-)
+def _default_source() -> Path:
+    return (
+        Path.home()
+        / "OneDrive - 6th Degree Engineering"
+        / "Documents - 6th Degree Engineering"
+        / "04_Accounting"
+        / "Accounting_6DE_2026.xlsm"
+    )
+
+
+def resolve_source(cli_file: str | None = None) -> Path:
+    if cli_file:
+        return Path(cli_file)
+    env = os.environ.get("SIXDE_ACCOUNTING_XLSM")
+    if env:
+        return Path(env)
+    return _default_source()
 
 # Regex for 6-digit project number (years 22-26)
 _JOB_RE = re.compile(r"\b(2[2-6]\d{4})\b")
@@ -170,7 +187,7 @@ def import_transactions(conn, wb) -> dict:
                 project_id = _lookup_project_id(conn, m.group(1))
 
         try:
-            conn.execute("""
+            cur = conn.execute("""
                 INSERT OR IGNORE INTO transactions
                     (txn_date, account, account_type, description, amount,
                      balance, expense_category, txn_type, project_id, month, source_row)
@@ -179,7 +196,10 @@ def import_transactions(conn, wb) -> dict:
                 txn_date, account, account_type, description, amount,
                 balance, expense_category, txn_type, project_id, month, source_row,
             ))
-            if conn.total_changes:
+            # rowcount is 1 when the row was inserted, 0 when INSERT OR IGNORE
+            # skipped a duplicate (was `conn.total_changes`, which is cumulative
+            # across the whole connection and so counted every row as inserted).
+            if cur.rowcount and cur.rowcount > 0:
                 stats["inserted"] += 1
             else:
                 stats["skipped"] += 1
@@ -440,11 +460,104 @@ def import_crm(conn, wb) -> dict:
 # ===========================================================================
 # Main
 # ===========================================================================
+def reconcile_transactions(wb) -> dict:
+    """Dry-run: read the Transactions sheet and compute the totals that WOULD be
+    imported, plus the Cashflow sheet's own TOTAL Net Cash Flow, so a run can be
+    reconciled to the penny before any --commit. Pure read — never writes.
+
+    Returns a dict with importable/skipped row counts, net/inflow/outflow of the
+    Amount column, the Cashflow sheet net, and whether they match to the cent.
+    """
+    ws = wb["Transactions"]
+    headers = [_text(c.value) for c in ws[2]]
+    col = {h: i for i, h in enumerate(headers) if h}
+    amt_i = col.get("Amount", 4)
+    date_i = col.get("Date", 0)
+
+    importable = skipped = 0
+    net = inflow = outflow = 0.0
+    for row in ws.iter_rows(min_row=3, values_only=True):
+        if not _iso(row[date_i]):
+            skipped += 1
+            continue
+        amount = _float(row[amt_i])
+        if amount is None:
+            skipped += 1
+            continue
+        importable += 1
+        net += amount
+        if amount >= 0:
+            inflow += amount
+        else:
+            outflow += amount
+
+    # Cashflow sheet: find the TOTAL row's Net Cash Flow (col D, index 3).
+    cashflow_net = None
+    if "Cashflow" in wb.sheetnames:
+        cf = wb["Cashflow"]
+        for row in cf.iter_rows(values_only=True):
+            if row and _text(row[0]) == "TOTAL":
+                cashflow_net = _float(row[3])
+                break
+
+    matches = (
+        cashflow_net is not None
+        and round(net, 2) == round(cashflow_net, 2)
+    )
+    return {
+        "importable": importable,
+        "skipped": skipped,
+        "net": round(net, 2),
+        "inflow": round(inflow, 2),
+        "outflow": round(outflow, 2),
+        "cashflow_net": None if cashflow_net is None else round(cashflow_net, 2),
+        "matches": matches,
+    }
+
+
 def main():
-    print(f"Source: {SOURCE}")
-    if not SOURCE.exists():
-        print(f"ERROR: Source file not found: {SOURCE}")
+    parser = argparse.ArgumentParser(
+        description="Import Accounting_6DE_2026.xlsm into the platform DB. "
+                    "Dry-run by default (reconciles transactions to the Cashflow "
+                    "sheet); pass --commit to actually write."
+    )
+    parser.add_argument("--file", help="Path to the .xlsm (overrides env/default).")
+    parser.add_argument(
+        "--commit", action="store_true",
+        help="Actually write to the DB. Without this it is a read-only dry-run.",
+    )
+    args = parser.parse_args()
+
+    source = resolve_source(args.file)
+    print(f"Source: {source}")
+    if not source.exists():
+        print(f"ERROR: Source file not found: {source}")
         sys.exit(1)
+
+    # ---- Dry-run (default): reconcile transactions, write nothing ----
+    if not args.commit:
+        wb = openpyxl.load_workbook(source, data_only=True, read_only=True)
+        try:
+            rec = reconcile_transactions(wb)
+        finally:
+            wb.close()
+        cf_display = (
+            "n/a" if rec["cashflow_net"] is None
+            else f"${rec['cashflow_net']:,.2f}"
+        )
+        print("\n=== DRY RUN (no changes written) ===")
+        print(f"Transactions importable:  {rec['importable']}")
+        print(f"Transactions skipped:     {rec['skipped']} (no date/amount)")
+        print(f"Net (Amount sum):         ${rec['net']:,.2f}")
+        print(f"  inflow:                 ${rec['inflow']:,.2f}")
+        print(f"  outflow:                ${rec['outflow']:,.2f}")
+        print(f"Cashflow sheet Net Total: {cf_display}")
+        print(f"Reconciles to the penny:  {'YES' if rec['matches'] else 'NO'}")
+        print("\nRe-run with --commit to write these transactions to the DB.")
+        return
+
+    print("=== COMMIT MODE — writing to the DB ===")
+    SOURCE = source  # noqa: N806  (kept for the log_activity detail below)
 
     wb = openpyxl.load_workbook(SOURCE, data_only=True, read_only=True)
     conn = ensure_db()
