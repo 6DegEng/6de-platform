@@ -215,7 +215,51 @@ Workbooks live on OneDrive on Juan's machines → the sync runner executes local
 | B14 | Mobile home-screen polish (Juan asked about iOS, 2026-08-08): proper PWA touches — 6DE app icon (`apple-touch-icon`), navy `theme-color`, standalone display manifest — so "Add to Home Screen" on iPhone looks/feels like an app. No native app for now (App Store overhead not justified for an internal tool). | M/L/L | Streamlit static-asset injection; verify on a real phone. |
 | B13 | **Desktop launcher (Juan approved 2026-08-08):** revive `launcher.py` / `launcher.spec` / `Launch_6DE_Platform.bat` so double-clicking an icon runs the Streamlit app locally against the **Azure Postgres** (same live data as the website, no Easy Auth portal login) | H/M/M | Build/test everything ungated (local run against Docker PG first). Going live needs the two gated enablers in §8 item 9. Do NOT create a second local database — one source of truth. Launcher should read the DSN from a local `.env`/`PLATFORM_DATABASE_URL`, never hardcode it. Interim already done: Juan can "Install as app" from Edge for a desktop icon onto the hosted site. |
 
+## 6.1 BLOCKER for accounting sync — schema migration (GATED, found 2026-08-08)
+
+**The accounting importer cannot be trusted until this is fixed, and `sync_all.py`
+now correctly refuses to run it.** Two constraints in `db/schema.sql` silently discard
+real rows because the importer uses `INSERT OR IGNORE`, which swallows the violation:
+
+| Constraint | What it eats | Cost |
+|---|---|---|
+| `CHECK (account_type IN ('Debit','Credit'))` | the workbook's legitimate `'Business'` rows | **270 rows, $26,798.49** |
+| `UNIQUE (txn_date, amount, description)` | genuinely repeated charges (two identical fees in one day) | **11 rows** |
+
+Total predicted shortfall **$24,379.62** — confirmed exactly against a real commit run
+(workbook $44,225.13 vs database $19,845.51).
+
+**Proposed fix (needs Juan's OK — schema migration is gated):**
+1. Widen the CHECK to include `'Business'` (and any other account types in the
+   workbook), or drop the CHECK and validate in the importer where a rejection can be
+   *reported* instead of swallowed.
+2. Replace the UNIQUE key with one that admits legitimate repeats — add an
+   `occurrence` column numbering identical (date, amount, description) rows within a
+   sheet, and key on `(txn_date, amount, description, occurrence)`. Stable when Juan
+   inserts rows, unlike keying on the spreadsheet row number.
+3. Separately: replace `INSERT OR IGNORE` in `import_transactions` with an explicit
+   upsert so a constraint violation can never again vanish silently. **This is the
+   root cause** — the constraints are just where it showed up first.
+
 ## 7. Session Log (append-only; newest first)
+
+- **2026-08-08 (Claude Code marathon — §5 Phase A shipped):**
+  - **CI had been RED on main since 2026-08-07** (three commits) — a lint-only failure
+    that merging straight to main never surfaced. `tests-postgres` was green throughout,
+    so nothing functional reached prod. Fixed, and added ruff + "check the run after
+    pushing" to the §3 bar so a green deploy is no longer mistaken for a green CI.
+  - **`scripts/sync_all.py` shipped** — hash-gated, snapshot-before-parse, dry-run
+    reconciliation, commit only on an exact match, post-write verification, JSONL run
+    log, freshness in the DB.
+  - **It immediately earned its keep:** a commit run against a throwaway DB reported
+    "reconciled OK" and produced books off by **$24,379.62**. Root cause is
+    `INSERT OR IGNORE` hiding two constraint violations (see §6.1). Reconciliation now
+    predicts the shortfall to the cent and REFUSES the accounting import. Tracker
+    imports cleanly and verifies exactly ($231,452.00).
+  - **Freshness is visible in the app**: "Data as of ..." on the Dashboard, and a
+    Data-freshness panel on `/Health` that flags a stale or mismatched source in red.
+  - Corrected drift: the accounting dry-run figures in §8 were stale (705 rows /
+    $6,098.49); the workbook now reads **770 rows / net $44,225.13**.
 
 - **2026-08-08 (Cowork QA tour):** Full 11-page live tour in Chrome post-deploy — healthy,
   on-brand, no tracebacks; findings logged as §1.1. Juan's Excel-first sync directive recorded;
