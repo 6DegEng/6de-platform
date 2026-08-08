@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import contextlib
 import shutil
 import sys
 import tempfile
@@ -49,6 +50,7 @@ import openpyxl  # noqa: E402
 
 from db import ensure_db  # noqa: E402
 from scripts.importers import import_accounting as acc  # noqa: E402
+from scripts.importers import import_permits as permits  # noqa: E402
 from scripts.importers import import_project_tracker as trk  # noqa: E402
 
 STATE_FILE = PLATFORM_ROOT / "db" / ".sync_state.json"
@@ -70,15 +72,37 @@ class Source:
     (conn, workbook) and returns a stats dict.
     """
 
-    def __init__(self, key, label, resolve, reconcile, importers, control):
+    def __init__(self, key, label, resolve, reconcile, importers, control,
+                 kind="workbook"):
         self.key = key
         self.label = label
         self.resolve = resolve
         self.reconcile = reconcile
         self.importers = importers
         self.control = control  # plain-English description of the check
+        # "workbook" sources are copied and parsed with openpyxl; "folder"
+        # sources (the permit register) are walked in place. Both are
+        # read-only; the snapshot exists to avoid locking a file Juan has open,
+        # and a directory walk never opens anything for write.
+        self.kind = kind
+
+    def prepare(self, payload):
+        """What the importers actually consume.
+
+        Workbook importers take the openpyxl workbook straight through. The
+        permit importer takes the parsed folder scan, so the walk happens once
+        here rather than inside every importer.
+        """
+        if self.kind == "folder":
+            return permits.scan_projects(payload)
+        return payload
 
     def describe_reconciliation(self, rec: dict) -> str:
+        if self.key == "permits":
+            return (
+                f"{rec['folders']} project folders, {rec['discovered']} permit "
+                f"numbers found in {rec['with_permits']} of them"
+            )
         if self.key == "accounting":
             base = (
                 f"{rec['importable']} rows, net {rec['net']:,.2f} vs "
@@ -134,7 +158,23 @@ SOURCES = {
         ],
         control="every project row must yield a readable contract value",
     ),
+    "permits": Source(
+        key="permits",
+        label="Permit register (project folders)",
+        resolve=permits.resolve_projects_root,
+        reconcile=permits.reconcile_permits,
+        importers=[("permits", permits.import_permits)],
+        control="the active-projects folder must contain project folders",
+        kind="folder",
+    ),
 }
+
+
+# Run order matters and is NOT alphabetical: permits link to projects by job
+# number, so the tracker must populate `projects` first or every permit lands
+# with no parent and is dropped. (Alphabetical order did exactly that on
+# 2026-08-08 — 52 folders, 0 permits written; the post-write check caught it.)
+SOURCE_ORDER = ("tracker", "accounting", "permits")
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +185,22 @@ def _now() -> str:
 
 
 def file_hash(path: Path) -> str:
+    """Content hash for a file, or a cheap tree fingerprint for a folder.
+
+    Hashing every byte under a project tree would take minutes; names + sizes +
+    mtimes change whenever a permit document lands, which is the only signal
+    the folder walk cares about.
+    """
     h = hashlib.sha256()
+    if path.is_dir():
+        for entry in sorted(path.rglob("*")):
+            try:
+                stat = entry.stat()
+                h.update(f"{entry.relative_to(path)}|{stat.st_size}|"
+                         f"{int(stat.st_mtime)}\n".encode())
+            except OSError:
+                continue  # vanished mid-walk (OneDrive sync) — ignore
+        return h.hexdigest()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
@@ -212,6 +267,13 @@ def verify_landed(source: Source, conn, rec: dict) -> tuple[bool, str]:
     Reconciliation predicts; this confirms. They are deliberately independent —
     a bug in the prediction is exactly what this is here to catch.
     """
+    if source.key == "permits":
+        row = conn.execute("SELECT COUNT(*) AS n FROM permits").fetchone()
+        # No money to reconcile — the check is that the register is not empty
+        # after a run that claimed to find permits.
+        ok = row["n"] > 0 or rec["discovered"] == 0
+        return ok, f"db holds {row['n']} permits ({rec['discovered']} numbers found)"
+
     if source.key == "accounting":
         row = conn.execute(
             "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total "
@@ -268,13 +330,20 @@ def sync_source(source: Source, conn, *, commit: bool, force: bool,
         return record
 
     # Snapshot: parse a copy so a live Excel session is never locked or
-    # half-read. openpyxl would otherwise hold the real file open.
-    with tempfile.TemporaryDirectory() as tmp:
-        snapshot = Path(tmp) / path.name
-        shutil.copy2(path, snapshot)
-        wb = openpyxl.load_workbook(snapshot, data_only=True, read_only=True)
+    # half-read. openpyxl would otherwise hold the real file open. Folder
+    # sources are walked in place — a read-only walk locks nothing.
+    with contextlib.ExitStack() as stack:
+        if source.kind == "folder":
+            payload = path
+            wb = None
+        else:
+            tmp = stack.enter_context(tempfile.TemporaryDirectory())
+            snapshot = Path(tmp) / path.name
+            shutil.copy2(path, snapshot)
+            wb = openpyxl.load_workbook(snapshot, data_only=True, read_only=True)
+            payload = wb
         try:
-            rec = source.reconcile(wb)
+            rec = source.reconcile(payload)
             record["reconciliation"] = rec
             summary = source.describe_reconciliation(rec)
             record["detail"] = summary
@@ -302,7 +371,7 @@ def sync_source(source: Source, conn, *, commit: bool, force: bool,
 
             stats = {}
             for name, fn in source.importers:
-                stats[name] = fn(conn, wb)
+                stats[name] = fn(conn, source.prepare(payload))
                 log(f"           {name}: {stats[name]}")
             conn.commit()
 
@@ -331,7 +400,8 @@ def sync_source(source: Source, conn, *, commit: bool, force: bool,
             log(f"[{source.key}] ERROR - {exc}")
             return record
         finally:
-            wb.close()
+            if wb is not None:
+                wb.close()
 
     # Only advance the hash after a successful COMMIT. Advancing it after a
     # dry-run would make the next run think the file was already imported.
@@ -348,7 +418,7 @@ def main(argv=None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--commit", action="store_true",
                    help="Write to the DB. Without this it is a read-only dry-run.")
-    p.add_argument("--source", choices=sorted(SOURCES),
+    p.add_argument("--source", choices=list(SOURCE_ORDER),
                    help="Only sync this source (default: all).")
     p.add_argument("--force", action="store_true",
                    help="Ignore the hash gate and re-read even if unchanged.")
@@ -357,7 +427,7 @@ def main(argv=None) -> int:
                         "operator who has reviewed the mismatch; logged as such.")
     args = p.parse_args(argv)
 
-    keys = [args.source] if args.source else sorted(SOURCES)
+    keys = [args.source] if args.source else list(SOURCE_ORDER)
     conn = ensure_db()
     records = []
     try:

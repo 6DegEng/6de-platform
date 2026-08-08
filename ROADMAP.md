@@ -46,9 +46,12 @@ job is what THAT system can't do:
 1. **Read-only mirror / dashboard** — always-current view of pipeline, AR, permit + recert
    deadlines, fed by the §5 auto-sync. Juan types nothing here.
 2. **Second copy of the business data** — Postgres + nightly pg_dump, independent of OneDrive.
-3. **The multi-user option** — role-gated access for employees (Halil now, coordinator later)
-   who must NOT get the raw workbooks. Timekeeping is the first real multi-user page: its
-   value starts when HALIL logs time in it, not Juan.
+3. **The multi-user option** — role-gated access for FUTURE employees (none today — Halil
+   was terminated 2026-08; the coordinator hire is the next realistic user) who must NOT get
+   the raw workbooks. Timekeeping is the first real multi-user page: its value starts when an
+   employee other than Juan logs time in it. With zero current employees, this pillar is
+   entirely an option on the future — which strengthens the "mirror now, revisit at hire"
+   strategy.
 
 **Build rules that follow:** do NOT build/polish data-ENTRY forms that duplicate Excel
 (existing ones stay but are not invested in). DO build: mirror quality, freshness visibility,
@@ -124,6 +127,36 @@ hire #2–3, when multi-user pressure is real.
    stage the exact commands → §8. Also check whether previous nights failed silently (the
    known risk: failures converge on zero backups with no signal — an uptime/notification hook
    for workflow failures should ride along with the fix).
+
+## 1.2 Deep interactive QA pass — 2026-08-08 PM (Cowork, second sweep: tabs/views/responsive)
+
+**Confirmed good:** cold-hit direct navigation works on every page tested post-`fef7a86`
+(Bids, Projects, CRM, Financials, Timekeeping); browser console clean; empty-data states are
+graceful everywhere (no division-by-zero crashes on Analytics/Utilization with zero rows).
+
+**New findings (none block use; queue after §5 sync work):**
+1. **Responsive word-shattering at ~1075px width** — the KPI-truncation fix over-corrected:
+   "Working" tile renders "Workin g" (mid-word break) and the Projects gold **Search button
+   collapses into a vertical "Se arc h" column**. The wrap CSS needs `white-space` /
+   min-width rules, not break-anywhere. Same class: Kanban "AHJ/Permitting" column header
+   wraps mid-word again below ~1100px (the 07-15 fix assumed ≥1300px), and Bids' "Upcoming
+   Deadlines" tile label wraps onto the value line.
+2. **Timeline view is unusable at real data scale** — the ~25 Buena Vista sibling rows
+   (260304A–Y) dominate the chart, bar labels are unreadable at laptop widths, there is no
+   status-color legend (red/gold/cyan/gray mean nothing to a viewer), and "All" includes
+   long-completed 2023/2025 jobs. Fixes: collapse sibling sub-buildings to one row with a
+   count (the `daily_brief.py` convention), default the filter to Working, add a legend.
+3. **Kanban cards print "Client: —" and "Target: —" on every card** — omit empty fields
+   (also a data gap: client/target dates were never imported; §5 will fill some).
+   Card title "260304J (10)" renders awkwardly in narrow columns.
+4. ~~Employee roster missing Halil~~ **MOOT (Juan, 2026-08-08): Halil was terminated for
+   quality of work — the roster showing only Juan is CORRECT.** Do not seed Halil as an
+   employee. If historical Halil timesheet rows surface in imports, they are payroll
+   history: import them attributed to him as a FORMER employee (inactive), never as active.
+   ("Hired: 2024-01-01" on Juan's row still looks like a placeholder worth correcting.)
+5. Sidebar "Regenerate snapshots" button (SharePoint mirror) was NOT exercised — unclear
+   what it does to a viewer; deserves a tooltip/help caption and a look at whether it
+   belongs in the sidebar at all under the §0.5 read-mostly strategy.
 
 ## 2. ~~THE ONE HUMAN ACTION~~ — DONE 2026-08-07
 
@@ -416,8 +449,9 @@ Total predicted shortfall **$24,379.62** — confirmed exactly against a real co
    (+ set `SIXDE_CALC_DB`).
 6. Flip repo 6DegEng/6de-platform private (fee schedule is public; 60-day cron
    auto-disable risk).
-7. Timesheet data decisions for B2 (260304 building mapping; add Halil as employee
-   w/ role; dup row 260223).
+7. Timesheet data decisions for B2 (260304 building mapping; dup row 260223).
+   ~~Add Halil as employee~~ — moot: Halil terminated 2026-08 (see §1.2 item 4); any of
+   his historical rows import as former-employee history only.
 8. Batch-approval to delete the ~40 stale `origin/*` branches (B12) — deletion is gated.
    (The PyInstaller launcher files are NO LONGER deletion candidates — see B13.)
 9. **Desktop-launcher enablers (B13, both gated — needed only when the launcher is ready

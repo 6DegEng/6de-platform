@@ -41,6 +41,7 @@ class _FakeSource:
         self.key = "tracker"
         self.label = "fake"
         self.control = "test control"
+        self.kind = "workbook"   # parsed via openpyxl, like the real workbooks
         self.calls = []
         self._matches = matches
         self._rows = rows
@@ -60,6 +61,9 @@ class _FakeSource:
         if self._raises:
             raise RuntimeError("importer blew up")
         return {"inserted": self._rows}
+
+    def prepare(self, payload):
+        return payload
 
     def describe_reconciliation(self, rec):
         return f"{rec['importable']} things"

@@ -132,17 +132,36 @@ def _percent(value) -> float | None:
     return round(v, 2)
 
 
-_STATUS_MAP = {
-    "active": "active",
-    "on hold": "on_hold",
-    "on_hold": "on_hold",
-    "completed": "completed",
-    "complete": "completed",
-    "prospect": "prospect",
-    "archived": "archived",
-    "archive": "archived",
-    "closed": "completed",
-}
+# Ordered most-specific first: matching is by SUBSTRING, so a generic key
+# placed early would shadow a specific one ("complete" would eat "completed").
+#
+# The lifecycle stages below were the whole point of expanding the projects
+# CHECK constraint to 10 values, and schema.sql has allowed them since — but
+# this map never produced them, so every 'AHJ/Permitting', 'Revisions',
+# 'Drafting' and 'Inspection' row in the tracker was flattened to 'active'.
+# The Projects page ships filter chips for exactly those stages, and they could
+# never match anything. (Found 2026-08-08: 16 of 68 projects were mislabelled.)
+_STATUS_MAP = (
+    ("ahj/permitting", "ahj_permitting"),
+    ("ahj permitting", "ahj_permitting"),
+    ("permitting", "ahj_permitting"),
+    ("ahj", "ahj_permitting"),
+    ("drafting", "drafting"),
+    ("inspection", "inspection"),
+    ("revisions", "revisions"),
+    ("revision", "revisions"),
+    ("cancelled", "cancelled"),
+    ("canceled", "cancelled"),
+    ("on hold", "on_hold"),
+    ("on_hold", "on_hold"),
+    ("completed", "completed"),
+    ("complete", "completed"),
+    ("closed", "completed"),
+    ("prospect", "prospect"),
+    ("archived", "archived"),
+    ("archive", "archived"),
+    ("active", "active"),
+)
 
 
 def _normalize_status(raw) -> str:
@@ -152,7 +171,7 @@ def _normalize_status(raw) -> str:
     s = str(raw).strip().lower()
     # Strip any non-ASCII characters (emoji)
     s_clean = re.sub(r"[^\x00-\x7F]+", "", s).strip()
-    for keyword, status in _STATUS_MAP.items():
+    for keyword, status in _STATUS_MAP:
         if keyword in s_clean:
             return status
     # Check for common emoji meanings
