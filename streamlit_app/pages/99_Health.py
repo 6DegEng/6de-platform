@@ -23,16 +23,24 @@ a restart adds no repair the app cannot do itself.
 """
 from __future__ import annotations
 
+# ---------------------------------------------------------------------------
+# Path bootstrap — MUST run before any `streamlit_app` / `db` import.
+# Streamlit puts only the MAIN script's directory on sys.path, so a page hit
+# directly (a bookmarked /CRM on a cold container) has no repo root and dies
+# with ModuleNotFoundError. Entering via Home masks it. Every page has to be
+# import-self-sufficient.
+# ---------------------------------------------------------------------------
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
-
-import streamlit as st
 
 _PLATFORM_ROOT = Path(__file__).resolve().parents[2]
 if str(_PLATFORM_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_ROOT))
+
+import time
+from datetime import datetime, timezone
+
+import streamlit as st
 
 from config import DB_BACKEND  # noqa: E402
 

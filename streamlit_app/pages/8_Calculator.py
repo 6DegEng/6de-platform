@@ -1,6 +1,14 @@
 """Engineering — calc integration, package auditor, and required-checks library."""
 from __future__ import annotations
 
+
+# ---------------------------------------------------------------------------
+# Path bootstrap — MUST run before any `streamlit_app` / `db` import.
+# Streamlit puts only the MAIN script's directory on sys.path, so a page hit
+# directly (a bookmarked /CRM on a cold container) has no repo root and dies
+# with ModuleNotFoundError. Entering via Home masks it. Every page has to be
+# import-self-sufficient.
+# ---------------------------------------------------------------------------
 import sys
 from pathlib import Path
 

@@ -6,23 +6,28 @@ stage, client management, and analytics (win/loss, service-line breakdown).
 
 from __future__ import annotations
 
-import sqlite3
+# ---------------------------------------------------------------------------
+# Path bootstrap — MUST run before any `streamlit_app` / `db` import.
+# Streamlit puts only the MAIN script's directory on sys.path, so a page hit
+# directly (a bookmarked /CRM on a cold container) has no repo root and dies
+# with ModuleNotFoundError. Entering via Home masks it. Every page has to be
+# import-self-sufficient.
+# ---------------------------------------------------------------------------
 import sys
+from pathlib import Path
+
+_PLATFORM_ROOT = Path(__file__).resolve().parents[2]
+if str(_PLATFORM_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLATFORM_ROOT))
+
+import sqlite3
 from datetime import date
 from typing import Any
-from pathlib import Path
 
 import streamlit as st
 from streamlit_app.components.sidebar import render_sidebar
 from streamlit_app.components.db_status import connect_or_explain  # noqa: E402
 from streamlit_app.components.branding import page_header
-
-# ---------------------------------------------------------------------------
-# Path bootstrap — allow imports from the platform root
-# ---------------------------------------------------------------------------
-_PLATFORM_ROOT = Path(__file__).resolve().parents[2]
-if str(_PLATFORM_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PLATFORM_ROOT))
 
 from modules.crm.crud import (  # noqa: E402
     SOURCES,

@@ -83,6 +83,14 @@ acceptable; a silent unverified one is not.
 5. **Projects grid polish:** Next Action text can overlap the City column at default widths
    (row 260526); several **Completed projects show 0–1% progress** — data quality from the
    one-time import (progress % was never backfilled), worth a rule (Completed ⇒ 100%).
+7. **[FIXED 2026-08-08] Direct navigation to any page crashed on a cold container** —
+   `ModuleNotFoundError: No module named 'streamlit_app'`, seen live on `/CRM`. Only
+   Home.py bootstrapped sys.path before importing `streamlit_app.*`; the 9 pages
+   imported first and bootstrapped after, so whichever page was hit FIRST after a
+   restart died. Entering via Home masked it — which is why the QA tour missed it and a
+   "verified" deploy shipped it. All 10 entry points are now import-self-sufficient,
+   with a cold-import regression test and a new §3.5b cold-hit rule.
+
 6. **Recent Activity is frozen at Jun 11, 2026** — it reflects the one-time import. Becomes
    live automatically once §5 sync runs; until then it reads as staleness.
 
@@ -112,10 +120,17 @@ loop will correctly fall through to §5 Phase A / §6 backlog on its next pass.
 2. `python scripts/check_contrast.py` green for any color/theme change.
 3. Self code-review of the full diff (+ security review for backend/auth/DB work); fix findings.
 4. Live proof where visual/behavioral: run the app locally, screenshot or reproduce the fix.
-5. After any merge that deploys: poll the site until healthy, then load 2–3 real pages in a
-   browser (or `curl`) and confirm no traceback. **A deploy is not "done" until the live site
-   is verified.** If broken: fix forward immediately or `git revert` the merge — reverting main
-   is always available and ungated.
+5. After any merge that deploys: poll the site until healthy, then load real pages and
+   confirm no traceback. **A deploy is not "done" until the live site is verified.**
+   If broken: fix forward immediately or `git revert` the merge — reverting main is
+   always available and ungated.
+5b. **COLD-HIT every page URL directly** — type/paste `/CRM`, `/Billing`, `/Permits`… as
+   the FIRST request after the container restarts. Do **not** click through from Home:
+   entering via Home runs Home's import bootstrap and masks any page that is not
+   import-self-sufficient. That is exactly how the 2026-08-08
+   `ModuleNotFoundError: No module named 'streamlit_app'` reached production and
+   survived a "verified" deploy. Also remember the mid-swap trap: the first load after
+   a deploy is often still the OLD container, so confirm a marker from the new code.
 6. Append what shipped to the Session Log (§7) — one line each, plain English.
 
 > **STATUS 2026-08-07 (end of loop session): §4 NOW queue items 1–7 are ALL DONE and
