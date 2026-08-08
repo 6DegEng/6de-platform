@@ -62,6 +62,18 @@ RUN_LOG = PLATFORM_ROOT / "db" / "sync_runs.jsonl"
 META_PREFIX = "sync"
 
 
+def _bridge_opportunities(conn, _payload) -> dict:
+    """Turn freshly-imported proposals into CRM opportunities.
+
+    Signature matches the other importers (conn, payload) so it can sit in the
+    same list; the workbook is not needed because the bridge reads the rows the
+    proposal import just wrote.
+    """
+    from db import bridge_proposals_to_opportunities
+
+    return bridge_proposals_to_opportunities(conn)
+
+
 # ---------------------------------------------------------------------------
 # Source registry
 # ---------------------------------------------------------------------------
@@ -155,6 +167,13 @@ SOURCES = {
             ("projects", trk.import_projects),
             ("proposals", trk.import_proposals),
             ("crm", trk.import_crm),
+            # Runs LAST, after proposals exist. Without this a sync imports 91
+            # proposals and leaves the CRM pipeline reading $0, because the
+            # bridge otherwise only fires inside ensure_db() at app startup —
+            # and that is cached per container, so opportunities would not
+            # appear until Azure happened to restart. That is the "$0 pipeline
+            # / 0 opportunities" in ROADMAP §1.1.
+            ("opportunities", _bridge_opportunities),
         ],
         control="every project row must yield a readable contract value",
     ),

@@ -301,3 +301,65 @@ def test_reconcile_passes_when_every_row_survives_the_write():
 
     assert rec["matches"] is True
     assert rec["storable_net"] == rec["net"] == 60.0
+
+
+# ---------------------------------------------------------------------------
+# CRM bridge (§5 Phase A / ROADMAP §1.1 finding 1)
+# ---------------------------------------------------------------------------
+def test_sync_creates_opportunities_without_an_app_restart(db):
+    """A sync that imports proposals must leave the CRM pipeline populated.
+
+    The bridge otherwise only fires inside ensure_db() at app startup, which
+    Streamlit caches per container — so opportunities would not appear until
+    Azure happened to restart. That is the "$0 pipeline / 0 opportunities"
+    symptom: 91 proposals imported, 0 opportunities, indefinitely.
+    """
+    from scripts.sync_all import _bridge_opportunities
+
+    db.execute(
+        "INSERT INTO projects (job_number, name, status) VALUES ('260101', 'P', 'active')"
+    )
+    pid = db.execute("SELECT id FROM projects").fetchone()["id"]
+    db.execute(
+        "INSERT INTO proposals (project_id, proposal_number, status, fee_amount) "
+        "VALUES (?, 'PR-1', 'sent', 10000)",
+        (pid,),
+    )
+    db.commit()
+    assert db.execute("SELECT COUNT(*) AS n FROM opportunities").fetchone()["n"] == 0
+
+    stats = _bridge_opportunities(db, None)
+
+    assert stats["created"] == 1
+    assert db.execute("SELECT COUNT(*) AS n FROM opportunities").fetchone()["n"] == 1
+
+
+def test_bridge_is_in_the_tracker_sync_path_and_runs_last():
+    """Order matters: it can only bridge proposals that already exist."""
+    from scripts.sync_all import SOURCES
+
+    names = [name for name, _ in SOURCES["tracker"].importers]
+
+    assert "opportunities" in names, "the bridge is not wired into the sync"
+    assert names.index("proposals") < names.index("opportunities")
+
+
+def test_bridging_twice_creates_nothing_new(db):
+    from scripts.sync_all import _bridge_opportunities
+
+    db.execute(
+        "INSERT INTO projects (job_number, name, status) VALUES ('260102', 'Q', 'active')"
+    )
+    pid = db.execute("SELECT id FROM projects").fetchone()["id"]
+    db.execute(
+        "INSERT INTO proposals (project_id, proposal_number, status, fee_amount) "
+        "VALUES (?, 'PR-2', 'sent', 5000)",
+        (pid,),
+    )
+    db.commit()
+    _bridge_opportunities(db, None)
+
+    second = _bridge_opportunities(db, None)
+
+    assert second["created"] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM opportunities").fetchone()["n"] == 1
