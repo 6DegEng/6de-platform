@@ -321,11 +321,18 @@ Total predicted shortfall **$24,379.62** — confirmed exactly against a real co
    so an uptime monitor cannot read it yet. Adding the exclusion is auth config = gated.
    **This blocks item 2 below.**
 2. Uptime-monitor account signup (free tier, e.g. UptimeRobot) — needs item 1 first.
-3. **Supervised importer `--commit` runs — NOW TOP PRIORITY of your items** (accounting
-   first: dry-run says 705 rows / Net $6,098.49 reconciles to the penny). ~30 min with
-   the session watching. This is the Phase B step that unlocks the tight Excel→platform
-   auto-sync you asked for on 2026-08-08; the standing-sync *scheme* is already approved,
-   and after these runs the only remaining click is running `register_sync_task.ps1` once.
+3. **Approve the accounting schema fix (§6.1) — NOW TOP PRIORITY of your items.**
+   ~15 min to review. Two constraints in `schema.sql`, combined with `INSERT OR IGNORE`,
+   silently discard **$24,379.62** of real transactions (270 `'Business'` rows + 11
+   legitimately repeated charges). `sync_all.py` proves this and REFUSES to import
+   accounting until it's fixed — deliberately, because wrong financials on the dashboard
+   are worse than stale ones. Schema migration = gated, so it needs your nod.
+4. **Supervised importer `--commit` runs** (§5 Phase B), ~30 min with the session
+   watching. **Tracker is ready right now** — it reconciles and post-write-verifies
+   exactly ($231,452.00 across 50 projects). **Accounting is blocked on item 3.**
+   Current accounting dry-run reads 770 rows / net $44,225.13 (the older
+   705 rows / $6,098.49 figure was stale — you've been working in the workbook since).
+   After these runs the only remaining click is `register_sync_task.ps1` once.
 4. Top-nav vs sidebar taste decision (`feat/top-nav-header`, pushed but unmerged —
    run `streamlit run streamlit_app/app.py` to try it). This is §4 item 8.
 5. Engineering calc-DB decision: bundle `common.db` in the image vs pull from blob
