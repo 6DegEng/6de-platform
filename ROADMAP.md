@@ -35,6 +35,30 @@ acceptable; a silent unverified one is not.
 
 ---
 
+## 0.5 PRODUCT STRATEGY — what this platform is FOR (Juan + Cowork, 2026-08-08)
+
+Honest assessment, ratified by Juan: **as a data-entry ERP for a one-person firm, this app is
+more work than OneDrive + Excel + Claude skills — so it will not be that.** The real 6DE
+operating system is the tracker + accounting workbook (system of record) + the Cowork skill
+library (intake, invoicing, SIRS, recert, permitting, calcs, monthly close). The platform's
+job is what THAT system can't do:
+
+1. **Read-only mirror / dashboard** — always-current view of pipeline, AR, permit + recert
+   deadlines, fed by the §5 auto-sync. Juan types nothing here.
+2. **Second copy of the business data** — Postgres + nightly pg_dump, independent of OneDrive.
+3. **The multi-user option** — role-gated access for employees (Halil now, coordinator later)
+   who must NOT get the raw workbooks. Timekeeping is the first real multi-user page: its
+   value starts when HALIL logs time in it, not Juan.
+
+**Build rules that follow:** do NOT build/polish data-ENTRY forms that duplicate Excel
+(existing ones stay but are not invested in). DO build: mirror quality, freshness visibility,
+deadline surfacing, read-only registers (permits, calcs), role-gated access (B5 rises),
+desktop/mobile access (B13/B14). Engineering page: **the skills won** — do not bundle
+`common.db` or resurrect native calculators; repurpose the page as a per-project CALC
+REGISTER (which calc packages exist, QA/pre-seal status, sealed date — folder-walked like
+permits) + an index of the calc skills / Services Library. Revisit this whole strategy at
+hire #2–3, when multi-user pressure is real.
+
 ## 1. Current state
 
 > **SUPERSEDED — this section describes the state BEFORE the 2026-08-07 loop session.
@@ -93,6 +117,13 @@ acceptable; a silent unverified one is not.
 
 6. **Recent Activity is frozen at Jun 11, 2026** — it reflects the one-time import. Becomes
    live automatically once §5 sync runs; until then it reads as staleness.
+8. **🔴 NIGHTLY BACKUP FAILED 2026-08-08 4:02 AM** (run #36, died in 24s — early step, likely
+   firewall/KV/auth, not the dump itself). Spotted by Cowork on the Actions page. **Investigate
+   FIRST next loop iteration** — the backup is the §0.5 safety net and it is currently not
+   running. Diagnosis + workflow fix is ungated; if the cause is expired credentials/roles,
+   stage the exact commands → §8. Also check whether previous nights failed silently (the
+   known risk: failures converge on zero backups with no signal — an uptime/notification hook
+   for workflow failures should ride along with the fix).
 
 ## 2. ~~THE ONE HUMAN ACTION~~ — DONE 2026-08-07
 
@@ -100,9 +131,22 @@ acceptable; a silent unverified one is not.
 (`Juan Castillo <juan@6de.xyz>`; there was no `.gitconfig` on this machine at all).
 Shipping is unblocked and all four branches are backed up on origin.
 
-**Next-session prompt: the `/goal` loop prompt from 2026-08-07 still works verbatim.**
-Step 0 (the `gh auth login` fallback) is now a no-op, and §4 items 1–7 are done, so the
-loop will correctly fall through to §5 Phase A / §6 backlog on its next pass.
+**Next-session prompt: the 2026-08-08 MARATHON `/goal` prompt still works verbatim.**
+Confirmed at the end of the 2026-08-08 marathon. Its Phase 0 (bug sweep) and Phase 1
+priority list remain correct; the loop now falls through as follows, because §5 Phase A
+(`sync_all.py`) is DONE:
+  - priority 1 (§5 Phase A) → done; what remains of it is **gated** on §6.1.
+  - **start at priority 2: `import_permits.py` (§5 Phase A.2)** — scouting done, see below.
+  - then priority 3 (CRM bridge), 4 (§1.1 QA fixes), 5 (`register_sync_task.ps1` +
+    `docs/sync-runbook.md`), 6 (§6 backlog).
+
+**Permits scouting already done (2026-08-08), so the next session can start building:**
+54 project folders under `06_Engineering/01_Active Projects/` follow `YYMMDD - Name`
+(the prefix IS the tracker job #). UP numbers appear in `03_Correspondence/*.eml`
+filenames — e.g. `...Pilot_Submittal_UP26031193.eml` and
+`...Submission Tracking Number UP26033163 4_28_2026 306 PM.eml`. Each project also has a
+`Permitting/` subfolder and a `_CLAUDE_BRIEF.md` worth parsing. Regex `UP\\d{8}` / `UPA\\d{8}`
+over folder names, file names, and brief text. **Never scrape the county EPS portal.**
 
 ---
 
@@ -218,8 +262,9 @@ Workbooks live on OneDrive on Juan's machines → the sync runner executes local
 | B1 | CRM/proposals → opportunities import (pipeline $0 today) | H/M/L | Old PR #35 branch `feat/crm-polish` on origin has most of it — rebase/salvage instead of rebuilding |
 | B2 | Timesheets parity + HR foundation | H/M/M | Old PR #34 branch on origin; needs 3 data decisions (gated bits → WAITING) |
 | B3 | Permits importer (table empty) | H/M/L | PROMOTED into §5 Phase A.2 (Juan 2026-08-08) — folder-walk + tracker seed, linked by job # |
-| B4 | Engineering calc-DB in prod (`common.db` bundle-or-blob) | M/M/M | Infra decision gated → WAITING |
-| B5 | Page-level role authorization (`modules/auth.py:21` TODO) | M/M/L | Everyone authenticated sees Accounting/Financials today |
+| B4 | ~~Engineering calc-DB in prod~~ | — | CLOSED WON'T-DO per §0.5 (2026-08-08) — skills perform calcs now; superseded by B15 |
+| B15 | Engineering page → **calc register**: per-project list of calc packages (type, QA/pre-seal status, sealed date) folder-walked from project dirs à la permits, + static index of calc skills / Services Library; remove the calc-DB warning | M/M/L | Per §0.5. Fold the folder-walk into `sync_all.py` |
+| B5 | Page-level role authorization (`modules/auth.py:21` TODO) | **H**/M/L | RAISED by §0.5 — role-gating is the prerequisite for Halil using Timekeeping without seeing Accounting/Financials |
 | B6 | Connection pool (advisor ④) | M/M/M | Deferred by design until 3–4 concurrent users |
 | B7 | Route inline muted-color literals through `palette.py` | L/L/L | Makes the next retheme one file |
 | B8 | Dependency lockfile (pip-compile) so deploys are reproducible | M/L/L | Range pins currently allow surprise upgrades at image build |
@@ -257,6 +302,23 @@ Total predicted shortfall **$24,379.62** — confirmed exactly against a real co
    root cause** — the constraints are just where it showed up first.
 
 ## 7. Session Log (append-only; newest first)
+
+- **2026-08-08 (Claude Code marathon, part 2 — live crash fixed):**
+  - **Every page except Home crashed when opened directly on a cold container**
+    (`ModuleNotFoundError: No module named 'streamlit_app'`, live on `/CRM`). Root-caused
+    by Juan mid-session. Only Home bootstrapped sys.path before importing
+    `streamlit_app.*`; the pages imported ~7 lines too early. All 10 entry points are now
+    import-self-sufficient. **Verified by cold-hitting `/CRM` and `/Billing` directly on
+    prod** — both render fully.
+  - The regression test was **proven to fail on the broken code** before being accepted:
+    a fresh interpreter with the repo root removed from sys.path reproduces the exact
+    production message, plus a static ordering check across all 10 entry points.
+  - Added **§3.5b** to the bar: cold-hit page URLs directly after a deploy instead of
+    clicking through Home. Entering via Home is what masked this for two sessions —
+    including a QA tour that declared all 11 pages healthy.
+  - Reconfirmed the mid-swap trap twice more: the first TWO loads after this deploy were
+    still the old container (traceback pointed at a line number the fixed file doesn't
+    have). Always confirm a marker from the new code.
 
 - **2026-08-08 (Claude Code marathon — §5 Phase A shipped):**
   - **CI had been RED on main since 2026-08-07** (three commits) — a lint-only failure
