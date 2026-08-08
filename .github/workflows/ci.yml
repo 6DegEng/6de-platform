@@ -30,6 +30,15 @@ jobs:
         run: |
           ruff check . --select=E,F,W --ignore=E501,E402
 
+      - name: Check colour contrast (WCAG AA)
+        # ROADMAP B10. The palette is the source of truth for the navy+gold
+        # theme and check_contrast.py enforces AA on every pair — but it only
+        # ran when someone remembered. A theme tweak that quietly drops a label
+        # below 4.5:1 is invisible in review and obvious to whoever has to read
+        # the screen.
+        run: |
+          python scripts/check_contrast.py
+
       - name: Smoke import every page module
         # Confirms each Streamlit page can be parsed and its top-level imports resolve.
         # Does NOT attempt to run Streamlit — that's local-dev / deploy verification.
