@@ -227,6 +227,58 @@ def _upsert_client(conn, company: str | None, name: str | None = None,
 # ===========================================================================
 # IMPORT: Projects sheet
 # ===========================================================================
+def reconcile_projects(wb) -> dict:
+    """Dry-run: total the money columns the importer WOULD write, so a run can
+    be checked before any commit. Pure read — never writes.
+
+    The tracker has no separate control total to compare against (unlike the
+    accounting workbook's Cashflow sheet), so "reconciled" here means the sheet
+    parses CLEANLY: every row with a job number also yields a readable contract
+    value. A row whose money column is unreadable is the failure mode that
+    would silently import a project worth $0, so that is what gets counted and
+    what blocks the commit.
+
+    Returns the same shape as reconcile_transactions(): a ``matches`` flag plus
+    the numbers a human needs to sanity-check the run.
+    """
+    ws = wb["Projects"]
+    headers = [_text(c.value) for c in ws[3]]
+    col = {h: i for i, h in enumerate(headers) if h}
+    job_i = col.get("Project No", col.get("Project No.", 1))
+    name_i = col.get("Project Description / Address", 2)
+    contract_i = col.get("Contract Value ($)", 14)
+    paid_i = col.get("Amount Paid ($)", 15)
+
+    importable = skipped = unreadable_money = 0
+    contract_total = paid_total = 0.0
+
+    for row in ws.iter_rows(min_row=4, values_only=True):
+        if not row or job_i >= len(row):
+            skipped += 1
+            continue
+        if not _text(row[job_i]) or not _text(row[name_i]):
+            skipped += 1
+            continue
+        importable += 1
+
+        raw_contract = row[contract_i] if contract_i < len(row) else None
+        contract = _float(raw_contract)
+        if contract is None and raw_contract not in (None, ""):
+            # Present but unparseable — the case that would import as $0.
+            unreadable_money += 1
+        contract_total += contract or 0.0
+        paid_total += (_float(row[paid_i]) if paid_i < len(row) else None) or 0.0
+
+    return {
+        "importable": importable,
+        "skipped": skipped,
+        "unreadable_money": unreadable_money,
+        "contract_total": round(contract_total, 2),
+        "paid_total": round(paid_total, 2),
+        "matches": importable > 0 and unreadable_money == 0,
+    }
+
+
 def import_projects(conn, wb) -> dict:
     ws = wb["Projects"]
     stats = {"inserted": 0, "updated": 0, "skipped": 0}

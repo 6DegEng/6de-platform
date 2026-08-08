@@ -208,10 +208,12 @@ Workbooks live on OneDrive on Juan's machines → the sync runner executes local
 | B6 | Connection pool (advisor ④) | M/M/M | Deferred by design until 3–4 concurrent users |
 | B7 | Route inline muted-color literals through `palette.py` | L/L/L | Makes the next retheme one file |
 | B8 | Dependency lockfile (pip-compile) so deploys are reproducible | M/L/L | Range pins currently allow surprise upgrades at image build |
-| B9 | Remove vestigial PyInstaller launcher files | L/L/L | Confirm with Juan before deleting (delete = gated) |
+| B9 | ~~Remove vestigial PyInstaller launcher files~~ | — | SUPERSEDED by B13 — Juan wants the launcher REVIVED, not deleted (2026-08-08) |
 | B10 | `check_contrast.py` + ruff into CI as required checks | L/L/L | |
 | B11 | Uptime monitor wiring once Juan creates the account (⑤) | M/L/L | Endpoint from NOW-6; signup gated |
 | B12 | Old stale `origin/*` branch cleanup (~40) | L/L/L | Deletion = gated, batch-ask Juan once |
+| B14 | Mobile home-screen polish (Juan asked about iOS, 2026-08-08): proper PWA touches — 6DE app icon (`apple-touch-icon`), navy `theme-color`, standalone display manifest — so "Add to Home Screen" on iPhone looks/feels like an app. No native app for now (App Store overhead not justified for an internal tool). | M/L/L | Streamlit static-asset injection; verify on a real phone. |
+| B13 | **Desktop launcher (Juan approved 2026-08-08):** revive `launcher.py` / `launcher.spec` / `Launch_6DE_Platform.bat` so double-clicking an icon runs the Streamlit app locally against the **Azure Postgres** (same live data as the website, no Easy Auth portal login) | H/M/M | Build/test everything ungated (local run against Docker PG first). Going live needs the two gated enablers in §8 item 9. Do NOT create a second local database — one source of truth. Launcher should read the DSN from a local `.env`/`PLATFORM_DATABASE_URL`, never hardcode it. Interim already done: Juan can "Install as app" from Edge for a desktop icon onto the hosted site. |
 
 ## 7. Session Log (append-only; newest first)
 
@@ -288,5 +290,11 @@ Workbooks live on OneDrive on Juan's machines → the sync runner executes local
    auto-disable risk).
 7. Timesheet data decisions for B2 (260304 building mapping; add Halil as employee
    w/ role; dup row 260223).
-8. Batch-approval to delete the ~40 stale `origin/*` branches (B12) and the vestigial
-   PyInstaller launcher files (B9) — deletion is gated.
+8. Batch-approval to delete the ~40 stale `origin/*` branches (B12) — deletion is gated.
+   (The PyInstaller launcher files are NO LONGER deletion candidates — see B13.)
+9. **Desktop-launcher enablers (B13, both gated — needed only when the launcher is ready
+   to point at prod):** (a) an Azure Postgres firewall rule allowing Juan's PC/office IP
+   (Azure config); (b) putting the database connection string on Juan's PC — recommend a
+   dedicated Postgres user for desktop use (so it can be revoked independently of the
+   web app's credential) stored in a local `.env` the repo already gitignores. Sessions:
+   stage the exact commands/steps for both; Juan executes.

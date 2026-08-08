@@ -481,10 +481,33 @@ def reconcile_transactions(wb) -> dict:
     amt_i = col.get("Amount", 4)
     date_i = col.get("Date", 0)
 
+    desc_i = col.get("Transaction Description", 3)
+
     importable = skipped = 0
     net = inflow = outflow = 0.0
+    # The transactions table is UNIQUE (txn_date, amount, description) and the
+    # importer uses INSERT OR IGNORE, so identical rows COLLAPSE on write. A
+    # real bank register legitimately repeats a charge (two identical fees on
+    # one day), and those repeats are silently dropped. Model that here, before
+    # anything is written: what the DB will actually hold is the DEDUPLICATED
+    # total, and that is what has to match the workbook.
+    # The other silent-loss path: schema.sql has
+    # CHECK (account_type IN ('Debit','Credit')), but the workbook legitimately
+    # uses 'Business' too. INSERT OR IGNORE swallows the constraint violation,
+    # so those rows vanish without a word. Model this as well - a partial model
+    # is worse than none, because it reports "safe" while money goes missing.
+    at_i = col.get("Account Type", 2)
+    allowed_types = {"Debit", "Credit"}
+    rejected_types: dict[str, int] = {}
+    rejected_net = 0.0
+
+    seen: set[tuple] = set()
+    storable_net = 0.0
+    collapsed = 0
+
     for row in ws.iter_rows(min_row=3, values_only=True):
-        if not _iso(row[date_i]):
+        txn_date = _iso(row[date_i])
+        if not txn_date:
             skipped += 1
             continue
         amount = _float(row[amt_i])
@@ -498,6 +521,20 @@ def reconcile_transactions(wb) -> dict:
         else:
             outflow += amount
 
+        acct_type = _text(row[at_i]) if at_i < len(row) else None
+        if acct_type is not None and acct_type not in allowed_types:
+            rejected_types[acct_type] = rejected_types.get(acct_type, 0) + 1
+            rejected_net += amount
+            continue  # never reaches the table, so never reaches storable_net
+
+        key = (txn_date, amount,
+               _text(row[desc_i]) if desc_i < len(row) else None)
+        if key in seen:
+            collapsed += 1
+        else:
+            seen.add(key)
+            storable_net += amount
+
     # Cashflow sheet: find the TOTAL row's Net Cash Flow (col D, index 3).
     cashflow_net = None
     if "Cashflow" in wb.sheetnames:
@@ -507,10 +544,18 @@ def reconcile_transactions(wb) -> dict:
                 cashflow_net = _float(row[3])
                 break
 
-    matches = (
+    # Two independent conditions, both required:
+    #   1. the workbook agrees with itself (Transactions net == Cashflow TOTAL)
+    #   2. nothing will be LOST on write to the unique key
+    # Condition 2 is the one that caught a $24,379.62 discrepancy on
+    # 2026-08-08: 281 legitimately repeated rows collapse, so an import that
+    # "reconciled" would have stored $19,845.51 against a true $44,225.13.
+    workbook_consistent = (
         cashflow_net is not None
         and round(net, 2) == round(cashflow_net, 2)
     )
+    nothing_lost = round(storable_net, 2) == round(net, 2)
+
     return {
         "importable": importable,
         "skipped": skipped,
@@ -518,7 +563,14 @@ def reconcile_transactions(wb) -> dict:
         "inflow": round(inflow, 2),
         "outflow": round(outflow, 2),
         "cashflow_net": None if cashflow_net is None else round(cashflow_net, 2),
-        "matches": matches,
+        "storable_net": round(storable_net, 2),
+        "collapsed_rows": collapsed,
+        "rejected_account_types": rejected_types,
+        "rejected_rows": sum(rejected_types.values()),
+        "rejected_net": round(rejected_net, 2),
+        "workbook_consistent": workbook_consistent,
+        "nothing_lost": nothing_lost,
+        "matches": workbook_consistent and nothing_lost,
     }
 
 

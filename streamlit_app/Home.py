@@ -129,6 +129,24 @@ def _load_ar_aging_report(_conn):
     return [dict(r) for r in get_ar_aging_report(_conn)]
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _data_as_of(_conn) -> str:
+    """' · Data as of <when>' for the header, or a nudge if sync never ran.
+
+    Never raises: a broken freshness line must not take down the dashboard.
+    """
+    try:
+        from scripts.sync_all import read_freshness
+
+        freshness = read_freshness(_conn)
+    except Exception:  # noqa: BLE001
+        return ""
+    stamps = [i["at"] for i in freshness.values() if i.get("at")]
+    if not stamps:
+        return "  ·  Data from the one-time import — no sync has run yet"
+    return f"  ·  Data as of {max(stamps).replace('T', ' ').rstrip('Z')} UTC"
+
+
 _CACHED_LOADERS = (
     _load_dashboard_data,
     _load_ar_aging_summary,
@@ -151,7 +169,10 @@ except DB_ERRORS as exc:
 _title_col, _refresh_col = st.columns([6, 1])
 with _title_col:
     st.markdown("## Dashboard")
-    st.caption(format_date(str(__import__("datetime").date.today())))
+    # Today's date says when you're LOOKING; "data as of" says how old the
+    # numbers are. Without the second, stale figures look current.
+    st.caption(f"{format_date(str(__import__('datetime').date.today()))}"
+               f"{_data_as_of(conn)}")
 with _refresh_col:
     # Escape hatch from the 60s cache — for when you've just entered
     # something elsewhere and want to see it reflected now.

@@ -85,6 +85,39 @@ if payload["status"] == "ok":
 else:
     st.error(f"Database problem: {payload['database']}")
 
+# --- Data freshness -------------------------------------------------------
+# "Is the app up?" and "is the data current?" are different questions, and the
+# second is the one that actually bites: every page can render perfectly while
+# showing figures from weeks ago. The sync writes these rows.
+st.markdown("### Data freshness")
+try:
+    from db import ensure_db
+
+    from scripts.sync_all import read_freshness
+
+    freshness = read_freshness(ensure_db())
+except Exception as exc:  # noqa: BLE001
+    freshness = {}
+    st.caption(f"(could not read sync status: {type(exc).__name__})")
+
+if not freshness:
+    st.warning(
+        "No sync has run yet — every figure in the app comes from the "
+        "one-time import. Run `python scripts/sync_all.py` on the PC that "
+        "has the OneDrive workbooks."
+    )
+else:
+    for source in sorted(freshness):
+        info = freshness[source]
+        status = info.get("status", "?")
+        line = f"**{source}** — {status}, last run {info.get('at', 'unknown')}"
+        if status in ("committed", "unchanged"):
+            st.success(line)
+        elif status in ("mismatch", "verify-failed", "error"):
+            st.error(f"{line}\n\n{info.get('detail', '')}")
+        else:
+            st.info(line)
+
 st.caption(
     "Checked live on load. /_stcore/health only proves the web server is up; "
     "this runs a real query."

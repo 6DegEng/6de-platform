@@ -97,3 +97,5 @@ scripts/sync_accounting.log
 
 # ---------- Docker build artifacts ----------
 .dockerignore.local
+db/.sync_state.json
+db/sync_runs.jsonl
