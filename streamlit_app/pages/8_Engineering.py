@@ -37,7 +37,7 @@ require_auth()
 render_sidebar()
 page_header("Engineering", "Calc engine & code references", "🔧")
 
-conn = connect_or_explain("Calculator")
+conn = connect_or_explain("Engineering")
 calc_conn = get_calc_connection()
 
 # ------------------------------------------------------------------

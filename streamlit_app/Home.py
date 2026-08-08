@@ -268,9 +268,14 @@ with c11:
     total_projects = data.get("total_projects", 0)
     active_projects = data.get("active_projects", 0)
     pct = (active_projects / total_projects * 100) if total_projects else 0
-    st.metric("Working Rate", f"{pct:.0f}%",
+    # Named "Working Rate" until 2026-08-08, which read as labour utilisation
+    # (billable hours / capacity) and had people hunting for a bug — every time
+    # source is empty, so a utilisation figure of 60% looked impossible. The
+    # number was always correct; only the label was wrong.
+    st.metric("Projects Working", f"{pct:.0f}%",
               help="Share of all projects in a working stage: Active, Drafting, "
                    "AHJ/Permitting, Inspection, or Revisions. "
+                   "This counts PROJECTS, not hours. "
                    "See docs/data_definitions.md §6.")
 with c12:
     bid_count = len(data.get("upcoming_bid_deadlines", []))

@@ -46,6 +46,17 @@ from config import DB_BACKEND  # noqa: E402
 
 st.set_page_config(page_title="Health | 6DE", page_icon="+", layout="centered")
 
+# Render the branded sidebar like every other page. Without it Streamlit falls
+# back to its default nav, which looks unbranded AND leaks internal page names
+# ("Bids" instead of the customer-facing "Gov Solicitations").
+try:
+    from streamlit_app.components.sidebar import render_sidebar
+
+    render_sidebar()
+except Exception:  # noqa: BLE001
+    # Chrome is cosmetic; a health page must still answer when the app is sick.
+    pass
+
 APP_VERSION = "3.5"
 
 

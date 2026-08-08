@@ -60,7 +60,7 @@ def render_sidebar() -> None:
         st.markdown("")
 
         _section("Tools")
-        _nav("pages/8_Calculator.py", "Engineering", ":material/calculate:")
+        _nav("pages/8_Engineering.py", "Engineering", ":material/calculate:")
         st.markdown("")
 
         _section("Finance")
