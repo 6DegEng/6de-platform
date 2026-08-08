@@ -184,3 +184,50 @@ def test_permits_run_after_the_tracker():
     from scripts.sync_all import SOURCE_ORDER
 
     assert SOURCE_ORDER.index("tracker") < SOURCE_ORDER.index("permits")
+
+
+# ---------------------------------------------------------------------------
+# §1.1 finding 5 — Completed projects must not show 0% progress
+# ---------------------------------------------------------------------------
+def test_completed_projects_are_forced_to_100_percent(db, tmp_path):
+    """The tracker's "% Complete" column was never backfilled when jobs closed,
+    so finished projects read "Completed / 1%" and made the whole column
+    untrustworthy. Status is the reliable signal."""
+    import openpyxl
+
+    from scripts.importers import import_project_tracker as trk
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Projects"
+
+    # The importer reads headers from row 3 and data from row 4, so place
+    # cells explicitly rather than relying on append() row bookkeeping.
+    headers = ["Folder", "Project No", "Project Description / Address",
+               "Priority", "Project Status", "Action By", "Next Action",
+               "Date Opened", "Target Close", "% Complete", "City", "Contact",
+               "Company / Client", "Scope of Work", "Contract Value ($)",
+               "Amount Paid ($)", "Outstanding Balance ($)", "COGS", "Profit",
+               "Notes"]
+    for i, name in enumerate(headers, start=1):
+        ws.cell(row=3, column=i, value=name)
+
+    def _write(row, job, name, status, pct):
+        values = [None, job, name, None, status, None, None, None, None, pct,
+                  None, None, None, None, 1000, 0, 1000, 0, 0, None]
+        for i, value in enumerate(values, start=1):
+            ws.cell(row=row, column=i, value=value)
+
+    _write(4, "260201", "Done Job", "Completed", 0.01)
+    _write(5, "260202", "Live Job", "Drafting", 0.30)
+
+    trk.import_projects(db, wb)
+
+    rows = {r["job_number"]: r for r in db.execute(
+        "SELECT job_number, status, percent_complete FROM projects"
+    ).fetchall()}
+    assert rows["260201"]["percent_complete"] == 100.0
+    assert rows["260201"]["status"] == "completed"
+    # An in-flight project keeps whatever the tracker says.
+    assert rows["260202"]["percent_complete"] == 30.0
+    assert rows["260202"]["status"] == "drafting"

@@ -513,6 +513,17 @@ def _build_grid_options(
             header_name=COLUMN_HEADERS[col],
             editable=True,
             minWidth=130,
+            # Next Action is free text and routinely longer than its column, so
+            # at default widths it spilled over the neighbouring City value and
+            # both became unreadable (ROADMAP §1.1 finding 5, row 260526).
+            # Clip with an ellipsis and put the full text in a hover tooltip —
+            # truncating without a tooltip would hide information instead.
+            tooltipField=col,
+            cellStyle={
+                "whiteSpace": "nowrap",
+                "overflow": "hidden",
+                "textOverflow": "ellipsis",
+            },
         )
 
     for col in ("address", "city", "county"):

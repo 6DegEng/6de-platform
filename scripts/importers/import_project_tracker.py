@@ -345,6 +345,13 @@ def import_projects(conn, wb) -> dict:
         cogs = _float(vals[col.get("COGS", 17)])
         profit = _float(vals[col.get("Profit", 18)])
         percent_complete = _percent(vals[col.get("% Complete", 9)])
+        # A finished project showing 0-1% progress is the tracker's % Complete
+        # column never having been backfilled when the job closed — the status
+        # is the reliable signal, not the percentage. Reading "Completed / 1%"
+        # on the Projects page makes the whole column untrustworthy, so treat
+        # the status as authoritative. (ROADMAP §1.1 finding 5.)
+        if status == "completed" and (percent_complete or 0) < 100:
+            percent_complete = 100.0
         priority = _text(vals[col.get("Priority", 3)])
         action_by = _text(vals[col.get("Action By", 5)])
         next_action = _text(vals[col.get("Next Action", 6)])
