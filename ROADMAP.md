@@ -62,6 +62,30 @@ acceptable; a silent unverified one is not.
 - **No monitoring:** only `/_stcore/health` (container liveness, not DB). Nightly pg_dump backup
   workflow exists and is solid.
 
+## 1.1 Live QA tour — 2026-08-08 (Cowork, post-deploy, all 11 pages in real Chrome)
+
+**Healthy:** every page renders on the navy+gold theme, zero tracebacks, `/Health` green
+(`backend: postgres`, ~33 ms). The outage class is confirmed dead.
+
+**Findings (queue for the loop, roughly by value):**
+1. **Data gaps are now THE product problem** — CRM pipeline $0 / 0 opportunities; Financials,
+   Billing, AR aging all $0.00; Accounting "No transactions match"; Permits empty; Timekeeping
+   0 hrs. Everything except Projects (68 rows) is an empty shell. → §5 is the priority. (Juan,
+   2026-08-08: the workbooks are where he actually works — see §5 directive.)
+2. **Dashboard "Working Rate 60%"** — suspicious: every time source is empty, so where does
+   60% come from? Verify definition; if it's a placeholder, label or remove it.
+3. **IA mismatch:** sidebar labels the calc page "Engineering" but its URL is `/Calculator`;
+   hitting `/Engineering` shows a "Page not found" toast on the Dashboard. Rename page file or
+   label so link text == URL.
+4. **`/Health` page renders Streamlit's default sidebar** (plain Home/Projects/…/Bids/Health
+   list) instead of the branded grouped sidebar — inconsistent chrome, and it exposes internal
+   page names ("Bids" vs the branded "Gov Solicitations" label).
+5. **Projects grid polish:** Next Action text can overlap the City column at default widths
+   (row 260526); several **Completed projects show 0–1% progress** — data quality from the
+   one-time import (progress % was never backfilled), worth a rule (Completed ⇒ 100%).
+6. **Recent Activity is frozen at Jun 11, 2026** — it reflects the one-time import. Becomes
+   live automatically once §5 sync runs; until then it reads as staleness.
+
 ## 2. ~~THE ONE HUMAN ACTION~~ — DONE 2026-08-07
 
 `gh auth login` is complete (account `6DegEng`) and git identity is configured
@@ -76,6 +100,12 @@ loop will correctly fall through to §5 Phase A / §6 backlog on its next pass.
 
 ## 3. Verification bar (the "earn a merge" checklist — run EVERY loop iteration)
 
+0. **`ruff check . --select=E,F,W --ignore=E501,E402`** — the exact CI invocation. Added
+   2026-08-08 after CI sat RED on main for three commits: merging straight to main skips
+   the PR check surface, so nothing surfaced a lint error until someone looked. Cheap, and
+   it is the difference between "tests pass" and "CI passes".
+0b. **After any push to main, actually check the run:** `gh run list --branch main --limit 2`.
+   A deploy can succeed while CI fails — they are separate workflows.
 1. `pytest tests/ -q` green on SQLite; on Postgres too (`docker-compose.dev.yml`) when the
    change touches DB/SQL. (Docker/WSL2 may still need provisioning on this machine — if
    unavailable, note it in the log; presentation-only changes may ship on SQLite-green alone.)
@@ -114,22 +144,57 @@ loop will correctly fall through to §5 Phase A / §6 backlog on its next pass.
 8. **`feat/top-nav-header`**: leave pushed but unmerged — needs Juan's taste decision
    (top nav vs sidebar). → WAITING ON JUAN.
 
-## 5. Data-freshness pipeline (projects / clients / CRM / accounting)
+## 5. Data-freshness pipeline — NOW THE #1 WORKSTREAM (Juan's directive, 2026-08-08)
 
-Goal: the platform stays current with `Project_Tracker_2026.xlsx` and
-`Accounting_6DE_2026.xlsm` without manual debugging passes. The workbooks live on OneDrive on
-Juan's machines, so sync must run locally, not in the cloud.
+> **Juan, verbatim intent:** "I would like for me to be able to work in the Excel sheets that
+> I already have and have it auto-populate that information into the Azure Streamlit app…
+> I need everything to stay in sync as tightly as possible so that I can transition into
+> using the platform over using the OneDrive files."
+>
+> Translation: **Excel is the source of truth and Juan's working surface. The platform is a
+> read-mostly mirror until parity is proven.** Sync direction is one-way (workbooks → DB).
+> The platform must never write back to the workbooks. Juan has approved the *scheme* of
+> recurring automated prod writes for this sync (that's what "tightly in sync" means) — the
+> FIRST commit run per importer is still supervised (Phase B) to validate reconciliation.
 
-- **Phase A (build, ungated):** make all importers idempotent, path-portable, dry-run by
-  default with penny-exact reconciliation reports (tracker → Projects/Proposals/CRM;
-  accounting → Transactions; permits later). `scripts/sync_accounting.py`'s hash-gate pattern
-  (only import when the file changed) is the right seam — extend it to the tracker.
-- **Phase B (one supervised run, gated):** first `--commit` for each importer against prod with
-  Juan watching; verify totals against the workbooks to the penny. Undo paths documented first.
-- **Phase C (standing sync, one-time approval):** a Windows Task Scheduler job (nightly) that
-  runs hash-gated dry-run → auto-commit only when reconciliation is exact, logging every run;
-  any mismatch = skip + flag instead of write. After Juan approves the scheme once, routine
-  syncs are no longer individually gated. This turns "keep it up to date" into a non-event.
+Sources: `Project_Tracker_2026.xlsx` (Projects / Proposals / CRM sheets),
+`Accounting_6DE_2026.xlsm` (Transactions / Recurring / CRM), later timesheets + permits.
+Workbooks live on OneDrive on Juan's machines → the sync runner executes locally on his PC.
+
+- **Phase A (build, ungated — do first):** one orchestrator `scripts/sync_all.py`:
+  - per-source hash gate (skip if unchanged — `sync_accounting.py` pattern), read-only copy
+    before parsing (never open the live OneDrive file for write, never hold a lock),
+  - idempotent upserts keyed on stable IDs (job #, transaction date+amount+desc hash),
+  - dry-run reconciliation FIRST, auto-commit ONLY when totals reconcile exactly
+    (tracker: contract $ to the penny; accounting: Net vs Cashflow sheet to the penny);
+    any mismatch → skip + log + flag, never a partial write,
+  - structured JSONL run log + a **last-sync/freshness line surfaced on `/Health`** (and a
+    small "Data as of…" caption on Dashboard) so staleness is visible in the app itself,
+  - proposals → CRM opportunities mapping included (salvage `feat/crm-polish` from origin).
+- **Phase A.2 — Permits sub-pipeline (Juan's directive 2026-08-08):** permits are filed *inside
+  each project's OneDrive folder*, so **project↔permit linkage is the integral piece** — the
+  link key is the job # (folder prefix `YYMMDD - Name` == tracker Job # == `projects` row; the
+  `permits` table already has a project FK, as the Permits form shows). Build
+  `scripts/importers/import_permits.py` into `sync_all.py`:
+  - walk `06_Engineering/01_Active Projects/<YYMMDD - Name>/`, regex `UP\d{8}` / `UPA\d{8}`
+    out of folder names, file names, registration/permit logs, and `_CLAUDE_BRIEF.md`;
+    upsert permits keyed `(job #, UP #)` with jurisdiction + whatever status the records give,
+  - ALSO seed a row for every tracker project currently in the AHJ/Permitting bucket, so the
+    Permits tab tracks "active projects in permitting" even where no UP number is parsed yet,
+  - source of truth = **records on disk/email/tracker only** — per the `permitting` skill's
+    2026-08-06 lockout lesson, NEVER auto-scrape the county EPS portal for status; portal
+    lookups stay human-paced and manual. The Cowork `permitting` skill (10_AI\02_Cowork\
+    04_Skills\permitting) documents the number anatomy and folder conventions to parse.
+- **Phase B (first supervised `--commit` per importer — GATED, ~30 min of Juan's time):**
+  accounting first (dry-run already reconciles: 705 rows, Net $6,098.49), then tracker
+  (invoice synthesis + clients), then CRM/opportunities. Undo paths documented before each.
+- **Phase C (standing sync — scheme pre-approved 2026-08-08, registration is Juan's click):**
+  Windows Task Scheduler job every ~30 min: `sync_all.py --commit` with the Phase-A guardrails.
+  AI prepares `register_sync_task.ps1`; **Juan runs it once** (persistence guardrail — AI never
+  registers scheduled tasks itself). Nightly pg_dump backup already provides the safety net.
+- **Phase D (later, optional):** cloud-side pull via Microsoft Graph (Azure Function reads the
+  SharePoint copies) so sync doesn't depend on Juan's PC being on. Needs app registration +
+  secrets = gated; only worth it if Phase C's PC-dependency proves annoying.
 
 ## 6. Backlog (post-NOW, pick top-down; Impact/Effort/Risk)
 
@@ -137,7 +202,7 @@ Juan's machines, so sync must run locally, not in the cloud.
 |---|------|-------|-------|
 | B1 | CRM/proposals → opportunities import (pipeline $0 today) | H/M/L | Old PR #35 branch `feat/crm-polish` on origin has most of it — rebase/salvage instead of rebuilding |
 | B2 | Timesheets parity + HR foundation | H/M/M | Old PR #34 branch on origin; needs 3 data decisions (gated bits → WAITING) |
-| B3 | Permits importer (table empty) | M/M/L | |
+| B3 | Permits importer (table empty) | H/M/L | PROMOTED into §5 Phase A.2 (Juan 2026-08-08) — folder-walk + tracker seed, linked by job # |
 | B4 | Engineering calc-DB in prod (`common.db` bundle-or-blob) | M/M/M | Infra decision gated → WAITING |
 | B5 | Page-level role authorization (`modules/auth.py:21` TODO) | M/M/L | Everyone authenticated sees Accounting/Financials today |
 | B6 | Connection pool (advisor ④) | M/M/M | Deferred by design until 3–4 concurrent users |
@@ -149,6 +214,12 @@ Juan's machines, so sync must run locally, not in the cloud.
 | B12 | Old stale `origin/*` branch cleanup (~40) | L/L/L | Deletion = gated, batch-ask Juan once |
 
 ## 7. Session Log (append-only; newest first)
+
+- **2026-08-08 (Cowork QA tour):** Full 11-page live tour in Chrome post-deploy — healthy,
+  on-brand, no tracebacks; findings logged as §1.1. Juan's Excel-first sync directive recorded;
+  §5 rewritten as the #1 workstream with the sync architecture (hash-gate → dry-run reconcile →
+  auto-commit-only-on-exact-match → freshness surfaced on `/Health`); standing-sync scheme
+  pre-approved, first commit runs still supervised. New marathon loop prompt issued.
 
 - **2026-08-07 (Claude Code loop session, part 2 — NOW queue 1–7 COMPLETE):**
   - **Error boundary on all 10 pages.** Added `connect_or_explain()` so each page is a
@@ -204,10 +275,11 @@ Juan's machines, so sync must run locally, not in the cloud.
    so an uptime monitor cannot read it yet. Adding the exclusion is auth config = gated.
    **This blocks item 2 below.**
 2. Uptime-monitor account signup (free tier, e.g. UptimeRobot) — needs item 1 first.
-3. Supervised importer `--commit` runs (accounting first: dry-run says 705 rows /
-   Net $6,098.49 reconciles to the penny), then the standing-sync scheme approval
-   (§5 Phase C). All three importers can now FIND their workbooks, so these are ready
-   to run whenever you can watch.
+3. **Supervised importer `--commit` runs — NOW TOP PRIORITY of your items** (accounting
+   first: dry-run says 705 rows / Net $6,098.49 reconciles to the penny). ~30 min with
+   the session watching. This is the Phase B step that unlocks the tight Excel→platform
+   auto-sync you asked for on 2026-08-08; the standing-sync *scheme* is already approved,
+   and after these runs the only remaining click is running `register_sync_task.ps1` once.
 4. Top-nav vs sidebar taste decision (`feat/top-nav-header`, pushed but unmerged —
    run `streamlit run streamlit_app/app.py` to try it). This is §4 item 8.
 5. Engineering calc-DB decision: bundle `common.db` in the image vs pull from blob

@@ -9,7 +9,6 @@ from __future__ import annotations
 import datetime
 
 import openpyxl
-import pytest
 
 from scripts.importers.import_accounting import reconcile_transactions, resolve_source
 
