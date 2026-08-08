@@ -107,9 +107,9 @@ hire #2–3, when multi-user pressure is real.
    is now `/Engineering` and matches the sidebar label. Live-verified cold.
 4. **[FIXED 2026-08-08] `/Health` sidebar** — now renders the branded grouped sidebar
    (wrapped in try/except: chrome is cosmetic, a health page must answer when the app is sick).
-5. **Projects grid polish:** Next Action text can overlap the City column at default widths
-   (row 260526); several **Completed projects show 0–1% progress** — data quality from the
-   one-time import (progress % was never backfilled), worth a rule (Completed ⇒ 100%).
+5. **[FIXED 2026-08-08] Projects grid polish** — Next Action now clips with an ellipsis and
+   a hover tooltip (truncating without one would hide information); Completed ⇒ 100% is now
+   enforced at import, so all 32 completed projects read 100% instead of 0–1%.
 7. **[FIXED 2026-08-08] Direct navigation to any page crashed on a cold container** —
    `ModuleNotFoundError: No module named 'streamlit_app'`, seen live on `/CRM`. Only
    Home.py bootstrapped sys.path before importing `streamlit_app.*`; the 9 pages
@@ -165,18 +165,25 @@ graceful everywhere (no division-by-zero crashes on Analytics/Utilization with z
 Shipping is unblocked and all four branches are backed up on origin.
 
 **Next-session prompt: the 2026-08-08 MARATHON `/goal` prompt still works verbatim.**
+Re-confirmed at the end of the marathon. Phase 0 (bug sweep) stays correct; in Phase 1
+priorities 1-5 are now complete, so the loop falls straight through to priority 6
+(§6 backlog top-down) — see the list below for the suggested order.
 Confirmed at the end of the 2026-08-08 marathon. Its Phase 0 (bug sweep) and Phase 1
 priority list remain correct; the loop now falls through as follows, because §5 Phase A
 (`sync_all.py`) is DONE:
-  - priority 1 (§5 Phase A) → **done**; what remains is **gated** on §6.1.
-  - priority 2 (§5 Phase A.2 permits) → **done** (49 rows on real data).
-  - priority 4 (§1.1 QA fixes) → findings 2, 3, 4 **done**. Remaining: **finding 5**
-    (Projects grid Next-Action overlap; Completed ⇒ 100% progress rule).
-  - priority 5 (`register_sync_task.ps1` + runbook) → **done**, awaiting Juan's one click.
-  - **START AT priority 3: the CRM proposals→opportunities bridge** — salvage from
-    `origin/feat/crm-polish` into the sync path. CRM pipeline still reads $0 / 0
-    opportunities live, which is the most visible remaining hole.
-  - then finish priority 4 finding 5, then priority 6 (§6 backlog top-down).
+**Priorities 1–5 are ALL DONE** (2026-08-08 marathon), and §1.1 has no open findings.
+The next session therefore starts at **priority 6: the §6 backlog, top-down**, with B10
+already closed. Suggested order given §0.5 (mirror-first, no employees today):
+
+  - **B1 is effectively done** — the CRM bridge now runs inside the sync; opportunities
+    appear without an app restart. Verify against prod once Phase B has run.
+  - **B3 done** (permit register). **B10 done** (ruff + contrast are required CI checks).
+  - **B8 (dependency lockfile)** — highest remaining value: deploys currently build from
+    range pins, so an upstream release can change production without a commit.
+  - **B7** (route inline colour literals through `palette.py`), then **B5** (page-level
+    role authorisation) — B5 rises when the coordinator is hired, not before.
+  - The Engineering page repurpose (calc REGISTER, folder-walked like permits) is the
+    natural next *feature*: it reuses the permit-scanner pattern that now exists.
 
 **Permits scouting already done (2026-08-08), so the next session can start building:**
 54 project folders under `06_Engineering/01_Active Projects/` follow `YYMMDD - Name`
@@ -340,6 +347,20 @@ Total predicted shortfall **$24,379.62** — confirmed exactly against a real co
    root cause** — the constraints are just where it showed up first.
 
 ## 7. Session Log (append-only; newest first)
+
+- **2026-08-08 (Claude Code marathon, part 4 — priorities 3, 4, 6):**
+  - **CRM bridge is now IN the sync path (priority 3).** The pipeline read $0 not because the
+    bridge was missing but because it only ran inside `ensure_db()` at app startup, which
+    Streamlit caches per container — so a sync imported 91 proposals and left 0 opportunities
+    until Azure happened to restart. Proven before the fix (91 proposals / 0 opportunities),
+    fixed by running the bridge as the tracker's last importer: same run, no restart,
+    **91 opportunities, weighted pipeline $286,200**. Salvaging `feat/crm-polish` proved
+    unnecessary — the existing mapping already reconciles 49/21/21 to 49/21/21.
+  - **§1.1 finding 5 closed (priority 4).** Next Action clips with a tooltip; Completed ⇒ 100%
+    at import — all 32 completed projects now read 100%. **All §1.1 findings are now fixed.**
+  - **B10 closed (priority 6):** `check_contrast.py` is now a required CI check. Ruff was
+    already wired; this was the missing half.
+  - Test suite **726 -> 730 green**, ruff clean, CI green, all cold-hit verified live.
 
 - **2026-08-08 (Claude Code marathon, part 3 — permits + QA + Phase C):**
   - **Permit register shipped (§5 Phase A.2).** Walks the 52 project folders, links permits to
