@@ -99,14 +99,14 @@ hire #2–3, when multi-user pressure is real.
    Billing, AR aging all $0.00; Accounting "No transactions match"; Permits empty; Timekeeping
    0 hrs. Everything except Projects (68 rows) is an empty shell. → §5 is the priority. (Juan,
    2026-08-08: the workbooks are where he actually works — see §5 directive.)
-2. **Dashboard "Working Rate 60%"** — suspicious: every time source is empty, so where does
-   60% come from? Verify definition; if it's a placeholder, label or remove it.
-3. **IA mismatch:** sidebar labels the calc page "Engineering" but its URL is `/Calculator`;
-   hitting `/Engineering` shows a "Page not found" toast on the Dashboard. Rename page file or
-   label so link text == URL.
-4. **`/Health` page renders Streamlit's default sidebar** (plain Home/Projects/…/Bids/Health
-   list) instead of the branded grouped sidebar — inconsistent chrome, and it exposes internal
-   page names ("Bids" vs the branded "Gov Solicitations" label).
+2. **[FIXED 2026-08-08] "Working Rate 60%"** — not a bug: it is active projects / total
+   projects (41/68). The NAME read as labour utilisation, which is why it looked impossible
+   with empty timesheets. Renamed **"Projects Working"**, help text now says it counts
+   projects, not hours.
+3. **[FIXED 2026-08-08] IA mismatch** — page file renamed to `8_Engineering.py`, so the URL
+   is now `/Engineering` and matches the sidebar label. Live-verified cold.
+4. **[FIXED 2026-08-08] `/Health` sidebar** — now renders the branded grouped sidebar
+   (wrapped in try/except: chrome is cosmetic, a health page must answer when the app is sick).
 5. **Projects grid polish:** Next Action text can overlap the City column at default widths
    (row 260526); several **Completed projects show 0–1% progress** — data quality from the
    one-time import (progress % was never backfilled), worth a rule (Completed ⇒ 100%).
@@ -168,10 +168,15 @@ Shipping is unblocked and all four branches are backed up on origin.
 Confirmed at the end of the 2026-08-08 marathon. Its Phase 0 (bug sweep) and Phase 1
 priority list remain correct; the loop now falls through as follows, because §5 Phase A
 (`sync_all.py`) is DONE:
-  - priority 1 (§5 Phase A) → done; what remains of it is **gated** on §6.1.
-  - **start at priority 2: `import_permits.py` (§5 Phase A.2)** — scouting done, see below.
-  - then priority 3 (CRM bridge), 4 (§1.1 QA fixes), 5 (`register_sync_task.ps1` +
-    `docs/sync-runbook.md`), 6 (§6 backlog).
+  - priority 1 (§5 Phase A) → **done**; what remains is **gated** on §6.1.
+  - priority 2 (§5 Phase A.2 permits) → **done** (49 rows on real data).
+  - priority 4 (§1.1 QA fixes) → findings 2, 3, 4 **done**. Remaining: **finding 5**
+    (Projects grid Next-Action overlap; Completed ⇒ 100% progress rule).
+  - priority 5 (`register_sync_task.ps1` + runbook) → **done**, awaiting Juan's one click.
+  - **START AT priority 3: the CRM proposals→opportunities bridge** — salvage from
+    `origin/feat/crm-polish` into the sync path. CRM pipeline still reads $0 / 0
+    opportunities live, which is the most visible remaining hole.
+  - then finish priority 4 finding 5, then priority 6 (§6 backlog top-down).
 
 **Permits scouting already done (2026-08-08), so the next session can start building:**
 54 project folders under `06_Engineering/01_Active Projects/` follow `YYMMDD - Name`
@@ -336,6 +341,26 @@ Total predicted shortfall **$24,379.62** — confirmed exactly against a real co
 
 ## 7. Session Log (append-only; newest first)
 
+- **2026-08-08 (Claude Code marathon, part 3 — permits + QA + Phase C):**
+  - **Permit register shipped (§5 Phase A.2).** Walks the 52 project folders, links permits to
+    projects by the job-number folder prefix. Real data: **49 rows** (45 discovered + 4 seeded
+    for AHJ/Permitting projects with no number yet). Re-running changes nothing. The county
+    portal is never contacted — status is 'submitted' and nothing finer.
+  - **Found a second silent data loss:** the tracker importer collapsed EVERY lifecycle stage to
+    'active', so 'AHJ/Permitting'(4), 'Revisions'(9), 'Drafting'(2), 'Inspection'(1) never
+    existed — 16 of 68 projects mislabelled, and the Projects page filter chips for those
+    stages could never match. schema.sql allowed those values all along. Fixed; the permit
+    seeding depends on it.
+  - Two more bugs caught by verification rather than review: sources ran alphabetically so
+    permits imported before any project existed (**52 folders, 0 permits** — the post-write
+    check flagged it); and the UP regex was ``-anchored so `..._Submittal_UP26031193.eml`
+    never matched (`_` is a word character).
+  - **§1.1 QA findings 2, 3, 4 fixed** — see above.
+  - **§5 Phase C prepared:** `register_sync_task.ps1` (30-min task, `-DryRun` mode, `-Remove`)
+    and `docs/sync-runbook.md` in plain English. **Deliberately NOT registered** — that is
+    Juan's one click.
+  - Test suite **713 -> 726 green**, ruff clean, CI green.
+
 - **2026-08-08 (Claude Code marathon, part 2 — live crash fixed):**
   - **Every page except Home crashed when opened directly on a cold container**
     (`ModuleNotFoundError: No module named 'streamlit_app'`, live on `/CRM`). Root-caused
@@ -437,22 +462,26 @@ Total predicted shortfall **$24,379.62** — confirmed exactly against a real co
    legitimately repeated charges). `sync_all.py` proves this and REFUSES to import
    accounting until it's fixed — deliberately, because wrong financials on the dashboard
    are worse than stale ones. Schema migration = gated, so it needs your nod.
-4. **Supervised importer `--commit` runs** (§5 Phase B), ~30 min with the session
-   watching. **Tracker is ready right now** — it reconciles and post-write-verifies
+4. **Run `register_sync_task.ps1` once** to switch on the 30-minute auto-sync (§5 Phase C).
+   Start with `-DryRun` for a day if you want to watch it first; `-Remove` turns it off.
+   Written, syntax-checked, and NOT registered — starting a job that survives reboots and
+   writes to prod is your call. Plain-English guide: `docs/sync-runbook.md`.
+5. **Supervised importer `--commit` runs** (§5 Phase B), ~30 min with the session
+   watching. **Tracker and permits are ready right now** — it reconciles and post-write-verifies
    exactly ($231,452.00 across 50 projects). **Accounting is blocked on item 3.**
    Current accounting dry-run reads 770 rows / net $44,225.13 (the older
    705 rows / $6,098.49 figure was stale — you've been working in the workbook since).
    After these runs the only remaining click is `register_sync_task.ps1` once.
-4. Top-nav vs sidebar taste decision (`feat/top-nav-header`, pushed but unmerged —
+6. Top-nav vs sidebar taste decision (`feat/top-nav-header`, pushed but unmerged —
    run `streamlit run streamlit_app/app.py` to try it). This is §4 item 8.
-5. Engineering calc-DB decision: bundle `common.db` in the image vs pull from blob
+7. Engineering calc-DB decision: bundle `common.db` in the image vs pull from blob
    (+ set `SIXDE_CALC_DB`).
-6. Flip repo 6DegEng/6de-platform private (fee schedule is public; 60-day cron
+8. Flip repo 6DegEng/6de-platform private (fee schedule is public; 60-day cron
    auto-disable risk).
-7. Timesheet data decisions for B2 (260304 building mapping; dup row 260223).
+9. Timesheet data decisions for B2 (260304 building mapping; dup row 260223).
    ~~Add Halil as employee~~ — moot: Halil terminated 2026-08 (see §1.2 item 4); any of
    his historical rows import as former-employee history only.
-8. Batch-approval to delete the ~40 stale `origin/*` branches (B12) — deletion is gated.
+10. Batch-approval to delete the ~40 stale `origin/*` branches (B12) — deletion is gated.
    (The PyInstaller launcher files are NO LONGER deletion candidates — see B13.)
 9. **Desktop-launcher enablers (B13, both gated — needed only when the launcher is ready
    to point at prod):** (a) an Azure Postgres firewall rule allowing Juan's PC/office IP
